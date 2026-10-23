@@ -1,0 +1,18 @@
+[
+    {
+        "stepTitle": "卸载选项",
+        "items": [
+            {
+                "type": "switch",
+                "field": "wizard_keep_data",
+                "label": "保留应用数据",
+                "initValue": "true",
+                "helpText": "开启后，邮件索引、账号配置与通讯录会保留在 NAS 上；关闭则删除应用私有数据目录。"
+            },
+            {
+                "type": "tips",
+                "helpText": "无论是否保留，共享目录 fnmail/mailbox 中的邮件归档文件都不会被自动删除，需要时请手动清理。"
+            }
+        ]
+    }
+]

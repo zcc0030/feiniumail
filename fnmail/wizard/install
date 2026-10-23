@@ -1,0 +1,31 @@
+[
+    {
+        "stepTitle": "服务端口",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "FeiniuMail 会同时提供飞牛桌面窗口入口和 IP:端口 直连入口。请为它选择一个未被占用的端口，建议范围 1024-65535。"
+            },
+            {
+                "type": "text",
+                "field": "wizard_port",
+                "label": "服务端口",
+                "initValue": "7300",
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请填写服务端口"
+                    },
+                    {
+                        "pattern": "^[0-9]{4,5}$",
+                        "message": "端口必须是 4-5 位数字，例如 7300"
+                    }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "若安装后端口被其它应用占用，FeiniuMail 启动前会自动检测并给出明确提示；你也可以在「应用设置 - 服务端口」中随时修改。"
+            }
+        ]
+    }
+]

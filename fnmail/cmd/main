@@ -1,0 +1,545 @@
+#!/bin/bash
+# FeiniuMail 生命周期主脚本：start / stop / status
+# 约定：0=成功或运行中，1=失败，3=status 时表示未运行
+set -u
+
+TAG="[fnmail]"
+APPDEST="${TRIM_APPDEST:-/var/apps/fnmail/target}"
+PKGETC="${TRIM_PKGETC:-/var/apps/fnmail/etc}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/fnmail/var}"
+DEFAULT_PORT=7300
+
+mkdir -p "$PKGVAR" 2>/dev/null
+
+# --------------------------------------------------------------------- 解释器选择
+# 飞牛系统自带的 python3 可能是精简版（缺 sqlite3/ssl 等标准库），
+# 因此不能只看“有没有 python3”，必须逐个候选验证所需标准库是否齐全。
+REQUIRED_MODULES="email imaplib poplib smtplib sqlite3 ssl"
+
+python_candidates() {
+    if [ -n "${FNMAIL_PYTHON:-}" ]; then
+        echo "$FNMAIL_PYTHON"
+    fi
+    p="$(command -v python3 2>/dev/null || true)"
+    if [ -n "$p" ]; then
+        echo "$p"
+    fi
+    p="$(command -v python 2>/dev/null || true)"
+    if [ -n "$p" ]; then
+        echo "$p"
+    fi
+    # 飞牛应用中心安装的 Python 运行时
+    for ver in 312 311 310 39 38; do
+        echo "/var/apps/python$ver/target/bin/python3"
+    done
+}
+
+python_has_modules() {
+    [ -x "$1" ] || return 1
+    "$1" -c 'import email, imaplib, poplib, smtplib, sqlite3, ssl' >/dev/null 2>&1
+}
+
+# 列出该解释器缺失的标准库模块，用于生成可读的报错信息
+python_missing() {
+    "$1" - "$REQUIRED_MODULES" <<'PYEOF' 2>/dev/null
+import importlib
+import sys
+
+missing = []
+for name in sys.argv[1].split():
+    try:
+        importlib.import_module(name)
+    except Exception:
+        missing.append(name)
+print(" ".join(missing))
+PYEOF
+}
+
+PYTHON_BIN=""
+PYTHON_FOUND=""
+PYTHON_MISSING_MODULES=""
+while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    if python_has_modules "$cand"; then
+        PYTHON_BIN="$cand"
+        break
+    fi
+    if [ -x "$cand" ] && [ -z "$PYTHON_FOUND" ]; then
+        PYTHON_FOUND="$cand"
+        PYTHON_MISSING_MODULES="$(python_missing "$cand")"
+    fi
+done <<PYTHON_CANDIDATES
+$(python_candidates)
+PYTHON_CANDIDATES
+
+# 端口探测只用到 socket 模块，条件放宽为“任意可执行的 python”，
+# 以保证即使运行时缺库也能正确判断服务是否在监听。
+PROBE_PYTHON="$PYTHON_BIN"
+if [ -z "$PROBE_PYTHON" ]; then
+    PROBE_PYTHON="$(command -v python3 2>/dev/null || true)"
+fi
+if [ -z "$PROBE_PYTHON" ]; then
+    PROBE_PYTHON="$(command -v python 2>/dev/null || true)"
+fi
+
+PORT="$DEFAULT_PORT"
+HOST="0.0.0.0"
+if [ -f "$PKGETC/runtime.conf" ]; then
+    # shellcheck disable=SC1090
+    . "$PKGETC/runtime.conf"
+fi
+# 应用设置里刚提交的向导值优先
+if [ -n "${wizard_port:-}" ]; then
+    PORT="$wizard_port"
+fi
+if [ -n "${TRIM_SERVICE_PORT:-}" ] && [ "${TRIM_SERVICE_PORT:-}" != "0" ]; then
+    PORT="${TRIM_SERVICE_PORT}"
+fi
+
+PIDFILE="$PKGVAR/fnmail.pid"
+LOGFILE="$PKGVAR/fnmail.log"
+# 最近一次安装 / 升级的时间戳，由 install_callback 与 upgrade_callback 写入。
+# 用于判断端口上挂着的进程是本次安装拉起的，还是上一次安装遗留的旧进程。
+INSTALL_STAMP="$PKGVAR/.fnmail-installed-at"
+
+# 本脚本自身的绝对路径。应用中心调用时可能是相对路径，
+# 而“安装后自愈”需要在后台重新调用自己，所以先固定成绝对路径。
+SELF="$0"
+case "$SELF" in
+    /*) ;;
+    *) SELF="$(cd "$(dirname "$SELF")" 2>/dev/null && pwd)/$(basename "$SELF")" ;;
+esac
+
+# 安装 / 升级刚结束时，如果没人把服务拉起来，应用中心仍会定期用 status
+# 轮询运行状态（见官方“应用运行状态管理”）。这里借这次轮询补一次启动，
+# 让“装完就是运行中”，而不是要求用户手动去应用中心点启用。
+SELFHEAL_STAMP="$PKGVAR/.fnmail-selfheal"
+SELFHEAL_WINDOW=600
+SELFHEAL_LIMIT=3
+SELFHEAL_GAP=30
+
+fail() {
+    echo "$TAG $1"
+    if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+        {
+            echo "$1"
+            echo "（python：${PYTHON_BIN:-未找到可用运行时}  端口：$PORT）"
+            if [ -n "$PYTHON_MISSING_MODULES" ]; then
+                echo "（$PYTHON_FOUND 缺少标准库模块：$PYTHON_MISSING_MODULES）"
+            fi
+            if [ -f "$LOGFILE" ]; then
+                echo "----- $LOGFILE 末尾 -----"
+                tail -n 20 "$LOGFILE" 2>/dev/null
+            else
+                echo "日志文件尚未生成：$LOGFILE"
+            fi
+        } > "$TRIM_TEMP_LOGFILE"
+    fi
+    exit 1
+}
+
+# 端口是否真正处于监听状态。以真实 TCP 监听为准，避免进程崩溃后仍被判定为“运行中”。
+port_listening() {
+    [ -n "$PROBE_PYTHON" ] || return 1
+    "$PROBE_PYTHON" - "$1" <<'PYEOF' 2>/dev/null
+import socket
+import sys
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(1)
+try:
+    sock.connect(("127.0.0.1", int(sys.argv[1])))
+except (ValueError, OSError):
+    sys.exit(1)
+sock.close()
+sys.exit(0)
+PYEOF
+}
+
+# 端口冲突检测：返回 0 表示端口可用
+port_is_free() {
+    [ -n "$PROBE_PYTHON" ] || return 0
+    "$PROBE_PYTHON" - "$1" <<'PYEOF'
+import socket
+import sys
+
+try:
+    port = int(sys.argv[1])
+except (ValueError, IndexError):
+    sys.exit(2)
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.bind(("0.0.0.0", port))
+except OSError:
+    sock.close()
+    sys.exit(1)
+sock.close()
+sys.exit(0)
+PYEOF
+}
+
+port_owner() {
+    [ -n "$PROBE_PYTHON" ] || return 1
+    "$PROBE_PYTHON" - "$1" <<'PYEOF' 2>/dev/null
+import os
+import sys
+
+port = sys.argv[1]
+hexport = "%04X" % int(port)
+inodes = set()
+for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            next(fh, None)
+            for line in fh:
+                parts = line.split()
+                if len(parts) > 9 and parts[1].endswith(":" + hexport) and parts[3] == "0A":
+                    inodes.add(parts[9])
+    except OSError:
+        continue
+if not inodes:
+    sys.exit(1)
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    try:
+        for fd in os.listdir("/proc/%s/fd" % pid):
+            try:
+                target = os.readlink("/proc/%s/fd/%s" % (pid, fd))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                try:
+                    with open("/proc/%s/comm" % pid, "r", encoding="utf-8", errors="ignore") as fh:
+                        name = fh.read().strip()
+                except OSError:
+                    name = "unknown"
+                print("%s (PID %s)" % (name, pid))
+                sys.exit(0)
+    except OSError:
+        continue
+sys.exit(1)
+PYEOF
+}
+
+# 监听指定端口的进程 PID（每行一个）
+port_listener_pids() {
+    [ -n "$PROBE_PYTHON" ] || return 1
+    "$PROBE_PYTHON" - "$1" <<'PYEOF' 2>/dev/null
+import os
+import sys
+
+hexport = "%04X" % int(sys.argv[1])
+inodes = set()
+for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            next(fh, None)
+            for line in fh:
+                parts = line.split()
+                if len(parts) > 9 and parts[1].endswith(":" + hexport) and parts[3] == "0A":
+                    inodes.add(parts[9])
+    except OSError:
+        continue
+if not inodes:
+    sys.exit(0)
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    try:
+        for fd in os.listdir("/proc/%s/fd" % pid):
+            try:
+                target = os.readlink("/proc/%s/fd/%s" % (pid, fd))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                print(pid)
+                break
+    except OSError:
+        continue
+PYEOF
+}
+
+# 该进程是否属于本应用（命令行同时含 main.py 与本应用数据目录）
+pid_is_ours() {
+    [ -n "$PROBE_PYTHON" ] || return 1
+    "$PROBE_PYTHON" - "$1" "$PKGVAR" <<'PYEOF' 2>/dev/null
+import sys
+
+try:
+    with open("/proc/%s/cmdline" % sys.argv[1], "rb") as fh:
+        cmd = fh.read().decode("utf-8", "replace")
+except OSError:
+    sys.exit(1)
+sys.exit(0 if ("main.py" in cmd and sys.argv[2] in cmd) else 1)
+PYEOF
+}
+
+# 监听该端口的进程中属于本应用的那些 PID
+our_port_pids() {
+    result=""
+    for pid in $(port_listener_pids "$1"); do
+        if pid_is_ours "$pid"; then
+            result="$result $pid"
+        fi
+    done
+    echo $result
+}
+
+# 进程的启动时间是否不早于最近一次安装 / 升级。判不出来时按“是”处理，
+# 避免平白重启一个正在正常工作的服务。
+pid_is_fresh() {
+    [ -n "$PROBE_PYTHON" ] || return 0
+    "$PROBE_PYTHON" - "$1" "$INSTALL_STAMP" <<'PYEOF' 2>/dev/null
+import os
+import sys
+import time
+
+try:
+    stamp = os.stat(sys.argv[2]).st_mtime
+except OSError:
+    sys.exit(0)
+try:
+    with open("/proc/uptime", "r") as fh:
+        uptime = float(fh.read().split()[0])
+    with open("/proc/%s/stat" % sys.argv[1], "r") as fh:
+        ticks = int(fh.read().rsplit(")", 1)[1].split()[19])
+    hz = os.sysconf("SC_CLK_TCK")
+    started = time.time() - uptime + ticks / float(hz)
+except Exception:
+    sys.exit(0)
+sys.exit(0 if started >= stamp - 1 else 1)
+PYEOF
+}
+
+# 覆盖安装/重启后，旧实例退出与内核释放监听端口之间可能有一个很短的空窗。
+# 这里稍等一会儿，尽量把“其实马上就能起来”的场景消化掉，而不是立刻报端口冲突。
+wait_port_free() {
+    tries="${1:-40}"
+    i=0
+    while [ "$i" -lt "$tries" ]; do
+        if port_is_free "$PORT"; then
+            return 0
+        fi
+        sleep 0.25
+        i=$((i + 1))
+    done
+    return 1
+}
+
+# 本次安装 / 升级是否刚发生（默认 10 分钟以内）。自愈只在窗口期内生效，
+# 这样用户平时主动“停止”应用不会被自动拉起。
+install_is_recent() {
+    [ -f "$INSTALL_STAMP" ] || return 1
+    [ -n "$PROBE_PYTHON" ] || return 1
+    "$PROBE_PYTHON" - "$INSTALL_STAMP" "$SELFHEAL_WINDOW" <<'PYEOF' 2>/dev/null
+import os
+import sys
+import time
+
+try:
+    age = time.time() - os.stat(sys.argv[1]).st_mtime
+except OSError:
+    sys.exit(1)
+sys.exit(0 if 0 <= age <= float(sys.argv[2]) else 1)
+PYEOF
+}
+
+# 自愈的次数与间隔节流。记录格式：第一行剩余次数，第二行上次尝试时间。
+selfheal_allowed() {
+    tries="$SELFHEAL_LIMIT"
+    last=0
+    if [ -f "$SELFHEAL_STAMP" ]; then
+        tries="$(sed -n 1p "$SELFHEAL_STAMP" 2>/dev/null)"
+        last="$(sed -n 2p "$SELFHEAL_STAMP" 2>/dev/null)"
+    fi
+    case "$tries" in ''|*[!0-9]*) tries="$SELFHEAL_LIMIT" ;; esac
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$tries" -gt 0 ] || return 1
+    now="$(date +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$((now - last))" -ge "$SELFHEAL_GAP" ] || return 1
+    printf '%s\n%s\n' "$((tries - 1))" "$now" > "$SELFHEAL_STAMP" 2>/dev/null
+    return 0
+}
+
+# 本应用的进程 PID 列表：PIDFILE 优先，其次按数据目录特征匹配。
+# 注意：启动时用了 runuser 包装，PIDFILE 里记的其实是包装进程的 PID，
+# 单独 kill 它并不会带走真正持有端口的 python，因此再按端口监听者补一次。
+app_pids() {
+    pids=""
+    if [ -f "$PIDFILE" ]; then
+        pid="$(cat "$PIDFILE" 2>/dev/null)"
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            pids="$pid"
+        fi
+    fi
+    others="$(pgrep -f -- "main\.py .*--data-dir $PKGVAR" 2>/dev/null | tr '\n' ' ')"
+    listeners="$(our_port_pids "$PORT")"
+    echo "$pids $others $listeners" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' '
+}
+
+stop_app() {
+    pids="$(app_pids)"
+    if [ -n "$pids" ]; then
+        # shellcheck disable=SC2086
+        kill $pids 2>/dev/null
+        i=0
+        while [ "$i" -lt 20 ]; do
+            sleep 0.3
+            if [ -z "$(app_pids)" ]; then
+                break
+            fi
+            i=$((i + 1))
+        done
+        still="$(app_pids)"
+        if [ -n "$still" ]; then
+            # shellcheck disable=SC2086
+            kill -9 $still 2>/dev/null
+        fi
+    fi
+    rm -f "$PIDFILE"
+    wait_port_free 40 >/dev/null 2>&1 || true
+}
+
+case "${1:-}" in
+    start)
+        if port_listening "$PORT"; then
+            # 端口上确实有监听者时，必须先分清是本应用实例还是别的程序：
+            # 误把别人的程序当成本应用“已在运行”，会导致安装完成后看似启用、
+            # 实际服务根本没起来。只有命令行确属本应用才认。
+            own_pids="$(our_port_pids "$PORT")"
+            if [ -n "$own_pids" ]; then
+                stale=0
+                for own in $own_pids; do
+                    pid_is_fresh "$own" || stale=1
+                done
+                if [ "$stale" = "0" ]; then
+                    echo "$TAG 服务已在运行，端口 $PORT"
+                    exit 0
+                fi
+                # 端口上挂着的是上一次安装遗留的旧进程：停掉后按本次安装的
+                # 代码重新拉起，否则覆盖安装后应用中心会显示未启用。
+                stop_app
+                wait_port_free 80 || true
+            else
+                owner="$(port_owner "$PORT")"
+                if [ -n "$owner" ]; then
+                    fail "端口 $PORT 已被占用（占用进程：$owner），无法启动 FeiniuMail。请在应用设置中改用其它端口。"
+                fi
+                fail "端口 $PORT 已被占用，无法启动 FeiniuMail。请在应用设置中改用其它端口。"
+            fi
+        fi
+        # 上一轮残留进程（崩溃/僵死）会占着端口，先清理再启动
+        if [ -n "$(app_pids)" ]; then
+            stop_app
+            sleep 1
+        fi
+        if [ -z "$PYTHON_BIN" ]; then
+            if [ -n "$PYTHON_FOUND" ]; then
+                fail "Python 运行环境不完整：$PYTHON_FOUND 缺少标准库模块（$PYTHON_MISSING_MODULES）。请在应用中心安装 Python 3.12 运行时后重试。"
+            fi
+            fail "未在系统中找到可用的 python3，无法启动 FeiniuMail 服务。请先在应用中心安装 Python 3.12 运行时。"
+        fi
+        case "$PORT" in
+            ''|*[!0-9]*) fail "服务端口配置无效：'$PORT'，请在应用设置中重新配置。" ;;
+        esac
+        if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+            fail "服务端口 $PORT 超出合法范围 1-65535，请在应用设置中重新配置。"
+        fi
+
+        if ! port_is_free "$PORT"; then
+            owner="$(port_owner "$PORT")"
+            stale_pids="$(app_pids)"
+            # 覆盖安装最常见的是旧版 python 进程还没完全退干净；这种情况先重试释放端口。
+            if [ -n "$stale_pids" ] || [ -z "$owner" ] || printf '%s\n' "$owner" | grep -qi '^python'; then
+                if [ -n "$stale_pids" ]; then
+                    stop_app
+                fi
+                if ! wait_port_free 80; then
+                    owner="$(port_owner "$PORT")"
+                else
+                    owner=""
+                fi
+            fi
+            if ! port_is_free "$PORT"; then
+                if [ -n "$owner" ]; then
+                    fail "端口 $PORT 已被占用（占用进程：$owner），无法启动 FeiniuMail。请在应用设置中改用其它端口。"
+                fi
+                fail "端口 $PORT 已被占用，无法启动 FeiniuMail。请在应用设置中改用其它端口。"
+            fi
+        fi
+
+        cd "$APPDEST/server" || fail "应用文件缺失：$APPDEST/server 不存在，请重新安装。"
+
+        RUNAS=""
+        if [ "$(id -u 2>/dev/null)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ] && id "$TRIM_USERNAME" >/dev/null 2>&1; then
+            RUNAS="runuser -u $TRIM_USERNAME --"
+        fi
+
+        # shellcheck disable=SC2086
+        nohup $RUNAS "$PYTHON_BIN" main.py \
+            --host "$HOST" \
+            --port "$PORT" \
+            --data-dir "$PKGVAR" \
+            --etc-dir "$PKGETC" \
+            --app-dir "$APPDEST" \
+            --log-file "$LOGFILE" \
+            >> "$LOGFILE" 2>&1 &
+
+        pid=$!
+        echo "$pid" > "$PIDFILE"
+
+        i=0
+        while [ "$i" -lt 40 ]; do
+            sleep 0.25
+            if port_listening "$PORT"; then
+                echo "$TAG 服务已启动，端口 $PORT，PID $pid"
+                exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+                stop_app
+                fail "FeiniuMail 服务启动失败，请查看日志：$LOGFILE"
+            fi
+            i=$((i + 1))
+        done
+        stop_app
+        fail "FeiniuMail 服务启动超时（端口 $PORT 未进入监听状态），请查看日志：$LOGFILE"
+        ;;
+
+    stop)
+        if [ -z "$(app_pids)" ] && ! port_listening "$PORT"; then
+            rm -f "$PIDFILE"
+            echo "$TAG 服务未运行"
+            exit 0
+        fi
+        stop_app
+        echo "$TAG 服务已停止"
+        exit 0
+        ;;
+
+    status)
+        # 以端口是否真正被监听为准，避免“进程僵死但仍上报运行中”
+        if port_listening "$PORT"; then
+            exit 0
+        fi
+        # 安装 / 升级刚结束却没有服务在跑（收尾脚本没能拉起、或启动被竞态打断）时，
+        # 借应用中心的这次轮询把它补起来，避免出现“装好了却显示未启用”。
+        # 只在安装窗口期内、且次数有限时才动作，不影响用户主动停止应用。
+        if install_is_recent && selfheal_allowed; then
+            ( "$SELF" start >>"$LOGFILE" 2>&1 & )
+            sleep 2
+            if port_listening "$PORT"; then
+                echo "$TAG 服务未在运行，已自动补启动，端口 $PORT"
+                exit 0
+            fi
+        fi
+        exit 3
+        ;;
+
+    *)
+        echo "Usage: $0 {start|stop|status}" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,52 @@
+#!/bin/bash
+# 安装前检查：确认存在可用的 Python 3 运行环境（含所需标准库）
+set -u
+
+TAG="[fnmail]"
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-}"
+
+# 任意 python3 只能证明“有 python”，不能证明标准库齐全，
+# 这里直接验证 FeiniuMail 真正会用到的模块，避免装完才发现起不来。
+check_python() {
+    "$1" -c 'import email, imaplib, poplib, smtplib, sqlite3, ssl' >/dev/null 2>&1
+}
+
+FOUND=""
+MISSING=""
+for cand in "$(command -v python3 2>/dev/null || true)" \
+            "$(command -v python 2>/dev/null || true)" \
+            /var/apps/python312/target/bin/python3 \
+            /var/apps/python311/target/bin/python3 \
+            /var/apps/python310/target/bin/python3; do
+    [ -n "$cand" ] && [ -x "$cand" ] || continue
+    if check_python "$cand"; then
+        exit 0
+    fi
+    if [ -z "$FOUND" ]; then
+        FOUND="$cand"
+        MISSING="$("$cand" - <<'PYEOF' 2>/dev/null
+import importlib
+
+missing = []
+for name in ("email", "imaplib", "poplib", "smtplib", "sqlite3", "ssl"):
+    try:
+        importlib.import_module(name)
+    except Exception:
+        missing.append(name)
+print(" ".join(missing))
+PYEOF
+)"
+    fi
+done
+
+if [ -n "$FOUND" ]; then
+    msg="$TAG Python 运行环境不完整：$FOUND 缺少标准库模块（$MISSING）。请先在应用中心安装 Python 3.12 运行时，再安装 FeiniuMail。"
+else
+    msg="$TAG 未检测到 python3 运行环境，无法安装 FeiniuMail。请先在应用中心安装 Python 3.12 运行时。"
+fi
+
+echo "$msg" >&2
+if [ -n "$TRIM_TEMP_LOGFILE" ]; then
+    echo "$msg" > "$TRIM_TEMP_LOGFILE"
+fi
+exit 1

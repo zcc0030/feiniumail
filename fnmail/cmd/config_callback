@@ -1,0 +1,50 @@
+#!/bin/bash
+# 配置变更后：写入运行时配置并重启服务使端口生效
+set -u
+
+TAG="[fnmail]"
+PKGETC="${TRIM_PKGETC:-/var/apps/fnmail/etc}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/fnmail/var}"
+PORT="${wizard_port:-}"
+
+# 定位 cmd/main：target 是软链接，用 "$APPDEST/.." 推断会得到一个不存在的
+# 路径，从而静默跳过重启。这里按脚本自身位置定位。
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+MAIN=""
+for cand in "$SELF_DIR/main" "/var/apps/fnmail/cmd/main"; do
+    if [ -x "$cand" ]; then
+        MAIN="$cand"
+        break
+    fi
+done
+
+case "$PORT" in
+    ''|*[!0-9]*) PORT="" ;;
+esac
+
+if [ -z "$PORT" ]; then
+    exit 0
+fi
+
+if [ ! -f "$PKGETC/runtime.conf" ]; then
+    printf 'PORT=%s\nHOST=0.0.0.0\n' "$PORT" > "$PKGETC/runtime.conf"
+else
+    if grep -q '^PORT=' "$PKGETC/runtime.conf" 2>/dev/null; then
+        sed -i "s/^PORT=.*/PORT=$PORT/" "$PKGETC/runtime.conf"
+    else
+        printf 'PORT=%s\n' "$PORT" >> "$PKGETC/runtime.conf"
+    fi
+fi
+chmod 600 "$PKGETC/runtime.conf" 2>/dev/null
+
+if [ -n "$MAIN" ]; then
+    "$MAIN" stop >/dev/null 2>&1
+    sleep 1
+    if "$MAIN" start >/dev/null 2>&1; then
+        echo "$TAG 配置已更新，服务已在新端口 $PORT 上重启"
+    else
+        echo "$TAG 配置已更新，但服务未能自动启动，请检查端口 $PORT 是否被占用"
+    fi
+fi
+
+exit 0

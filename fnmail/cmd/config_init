@@ -1,0 +1,28 @@
+#!/bin/bash
+# 配置变更前：校验向导提交的端口
+set -u
+
+TAG="[fnmail]"
+PORT="${wizard_port:-}"
+
+if [ -z "$PORT" ]; then
+    exit 0
+fi
+
+case "$PORT" in
+    *[!0-9]*)
+        msg="$TAG 服务端口必须是数字：'$PORT'"
+        echo "$msg" >&2
+        [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$msg" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+        ;;
+esac
+
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    msg="$TAG 服务端口超出范围（1-65535）：$PORT"
+    echo "$msg" >&2
+    [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$msg" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+exit 0

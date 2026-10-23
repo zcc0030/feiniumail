@@ -1,0 +1,18 @@
+#!/bin/bash
+# 卸载后清理：默认保留邮件数据；仅在用户明确选择删除时清理应用私有目录。
+# 注意：共享目录 fnmail/mailbox 属于用户数据，始终不在此脚本中删除。
+set -u
+
+TAG="[fnmail]"
+PKGETC="${TRIM_PKGETC:-/var/apps/fnmail/etc}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/fnmail/var}"
+KEEP="${wizard_keep_data:-true}"
+
+if [ "$KEEP" = "false" ]; then
+    rm -rf "$PKGVAR" "$PKGETC" 2>/dev/null
+    echo "$TAG 已删除应用私有数据（共享目录中的邮件归档未删除）"
+else
+    echo "$TAG 已卸载，邮件数据已保留"
+fi
+
+exit 0

@@ -1,0 +1,46 @@
+#!/bin/bash
+# 升级前：停止正在运行的服务
+set -u
+
+APPDEST="${TRIM_APPDEST:-/var/apps/fnmail/target}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/fnmail/var}"
+
+# 优先复用 main stop：它会连带停掉真正持有端口的 python 进程并等待端口释放，
+# 而下面这段兜底逻辑只按 pid 文件 / 命令行匹配，遇到 runuser 包装时可能漏杀。
+# main 的位置不能按 "$APPDEST/.." 推断：target 是软链接，那样会解析到一个
+# 不存在的目录，导致停服被静默跳过。改为按脚本自身位置定位。
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+MAIN=""
+for cand in "$SELF_DIR/main" "/var/apps/fnmail/cmd/main"; do
+    if [ -x "$cand" ]; then
+        MAIN="$cand"
+        break
+    fi
+done
+if [ -n "$MAIN" ]; then
+    "$MAIN" stop >/dev/null 2>&1 || true
+    exit 0
+fi
+
+PIDFILE="$PKGVAR/fnmail.pid"
+pid=""
+if [ -f "$PIDFILE" ]; then
+    pid="$(cat "$PIDFILE" 2>/dev/null)"
+fi
+if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    pid="$(pgrep -f -- "main\.py .*--data-dir $PKGVAR" 2>/dev/null | head -n 1)"
+fi
+
+if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null
+    i=0
+    while [ "$i" -lt 30 ]; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.3
+        i=$((i + 1))
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+fi
+rm -f "$PIDFILE"
+
+exit 0

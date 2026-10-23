@@ -1,0 +1,66 @@
+#!/bin/bash
+# 安装后初始化：准备配置目录与运行目录，写入默认运行时配置
+set -u
+
+TAG="[fnmail]"
+PKGETC="${TRIM_PKGETC:-/var/apps/fnmail/etc}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/fnmail/var}"
+PORT="${wizard_port:-7300}"
+
+# 定位 cmd/main。底座的 /var/apps/fnmail/target 是指向 /vol?/@appcenter/fnmail
+# 的软链接，内核解析 "$APPDEST/../cmd" 时会先进入真实目录再回退一层，得到
+# /vol?/@appcenter/cmd —— 那里并没有 main，于是判断失败、整段收尾被静默跳过，
+# 表现就是“安装成功但没在运行，要手动启用”。因此按脚本自身位置来定位。
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+MAIN=""
+for cand in "$SELF_DIR/main" "/var/apps/fnmail/cmd/main"; do
+    if [ -x "$cand" ]; then
+        MAIN="$cand"
+        break
+    fi
+done
+
+case "$PORT" in
+    ''|*[!0-9]*) PORT=7300 ;;
+esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    PORT=7300
+fi
+
+mkdir -p "$PKGETC" "$PKGVAR" "$PKGVAR/mailbox" "$PKGVAR/tmp" 2>/dev/null
+
+cat > "$PKGETC/runtime.conf" <<EOF
+# FeiniuMail 运行时配置，由飞牛应用设置向导生成
+PORT=$PORT
+HOST=0.0.0.0
+EOF
+
+chmod 600 "$PKGETC/runtime.conf" 2>/dev/null
+
+chmod +x "$SELF_DIR"/* 2>/dev/null
+chmod 755 "${TRIM_APPDEST:-/var/apps/fnmail/target}" 2>/dev/null
+
+# 记录本次安装时间，供 cmd/main 判断端口上的进程是不是上一版遗留的旧实例；
+# 同时重置自愈次数，让安装后的补启动兜底从头计数。
+: > "$PKGVAR/.fnmail-installed-at" 2>/dev/null
+rm -f "$PKGVAR/.fnmail-selfheal" 2>/dev/null
+
+# 覆盖安装（在已有版本上再次安装）时旧实例可能仍占着端口，
+# 这里统一按“先停、再拉起”收尾，避免留下未启用的状态。
+if [ -n "$MAIN" ]; then
+    "$MAIN" stop >/dev/null 2>&1 || true
+    i=0
+    while [ "$i" -lt 3 ]; do
+        if "$MAIN" start >/dev/null 2>&1; then
+            echo "$TAG 初始化完成，服务已启动，端口 $PORT"
+            exit 0
+        fi
+        sleep 3
+        i=$((i + 1))
+    done
+    echo "$TAG 初始化完成，但服务未能自动启动，请查看 $PKGVAR/fnmail.log"
+    exit 0
+fi
+
+echo "$TAG 初始化完成（未找到 $SELF_DIR/main，跳过自动启动），服务端口 $PORT"
+exit 0

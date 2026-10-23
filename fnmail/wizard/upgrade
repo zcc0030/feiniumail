@@ -1,0 +1,27 @@
+[
+    {
+        "stepTitle": "服务端口",
+        "items": [
+            {
+                "type": "text",
+                "field": "wizard_port",
+                "label": "服务端口",
+                "initValue": "7300",
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请填写服务端口"
+                    },
+                    {
+                        "pattern": "^[0-9]{4,5}$",
+                        "message": "端口必须是 4-5 位数字"
+                    }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "邮件账号、口令与通讯录数据在升级过程中会自动保留。"
+            }
+        ]
+    }
+]

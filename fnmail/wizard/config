@@ -1,0 +1,31 @@
+[
+    {
+        "stepTitle": "服务端口",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "修改端口后 FeiniuMail 会自动重启并在新端口上提供服务。桌面入口地址会同步更新。"
+            },
+            {
+                "type": "text",
+                "field": "wizard_port",
+                "label": "服务端口",
+                "initValue": "7300",
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请填写服务端口"
+                    },
+                    {
+                        "pattern": "^[0-9]{4,5}$",
+                        "message": "端口必须是 4-5 位数字"
+                    }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "若提示端口被占用，请更换端口，或先关闭占用该端口的其它应用。"
+            }
+        ]
+    }
+]

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>肥牛邮箱</title>
+<link rel="icon" href="/images/icon_64.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- 登录 / 首次设置 -->
+<div id="splash" class="splash">
+  <div class="splash-card">
+    <div class="splash-logo">
+      <img src="/images/icon_256.png" alt="FeiniuMail">
+      <div class="splash-title">肥牛邮箱</div>
+      <div class="splash-sub">NAS 上的本地邮件客户端</div>
+    </div>
+    <form id="splashForm" class="splash-form" autocomplete="off">
+      <div class="field">
+        <label id="splashLabel" for="splashPassword">访问口令</label>
+        <input id="splashPassword" type="password" required placeholder="请输入访问口令">
+      </div>
+      <div class="field" id="splashConfirmField" style="display:none">
+        <label for="splashConfirm">确认口令</label>
+        <input id="splashConfirm" type="password" placeholder="请再次输入口令">
+      </div>
+      <div id="splashHint" class="hint">首次使用请设置一个访问口令，用于保护邮件数据。</div>
+      <button type="submit" class="btn primary block" id="splashSubmit">进入</button>
+      <div id="splashError" class="error-text"></div>
+    </form>
+    <div class="splash-foot"><span id="splashVersion"></span></div>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="shell" class="shell hidden">
+  <header class="titlebar">
+    <div class="brand">
+      <img src="/images/icon_64.png" alt="">
+      <span>肥牛邮箱</span>
+    </div>
+    <nav class="views">
+      <button class="view-btn is-active" data-view="mail">邮件</button>
+      <button class="view-btn" data-view="contacts">通讯录</button>
+      <button class="view-btn" data-view="accounts">账号</button>
+      <button class="view-btn" data-view="logs">日志</button>
+      <button class="view-btn" data-view="tools">工具</button>
+    </nav>
+    <div class="titlebar-right">
+      <button id="btnOpenExternal" class="btn" title="在独立浏览器窗口中打开当前地址，不受桌面窗口尺寸限制">独立打开</button>
+      <button id="btnSyncAll" class="btn" title="立即收取所有账号的新邮件">收信</button>
+      <button id="btnCompose" class="btn primary">写信</button>
+      <button id="btnLogout" class="btn ghost" title="退出当前登录">退出</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main" id="main">
+      <section class="pane-list" id="listPane"></section>
+      <section class="pane-read" id="readPane"></section>
+    </main>
+  </div>
+</div>
+
+<div id="modalRoot" class="modal-root hidden"></div>
+<div id="toastRoot" class="toast-root"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
