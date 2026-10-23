@@ -1,3 +1,5 @@
+# 此项目为100%纯AI生成，无人类代码污染。
+
 # 肥牛邮箱（FeiniuMail）
 
 > 运行在 NAS 上的网页版邮件客户端 —— 让每一封邮件都安全留存在你自己的设备里。
@@ -61,7 +63,7 @@
 1. **获取安装包**：在项目发布页下载最新版本的 `.fpk` 格式应用包。
 2. **手动安装**：
    - 登录您的飞牛 OS 桌面，打开「**应用中心**」。
-   - 点击右上角（或菜单栏）的「**手动安装**」按钮。
+   - 点击左下角的「**手动安装**」按钮。
    - 选择并上传刚刚下载的 `.fpk` 文件。
    - 跟随向导简单配置服务端口，点击完成即可一键部署。
 
@@ -80,7 +82,17 @@
 - **多终端/多账号切换频繁者**：拥有多台设备（手机、平板、办公本），或者需要同时管理多个邮箱账号，希望在一个网页内就能跨设备获得完全一致的收发体验的用户。
 
 ---
+
+## 五、免责声明
+
+本项目仅为个人业余兴趣与娱乐性质的开源探索项目。**请勿将本软件应用于任何商业用途、企业办公或核心生产环境。**
+
+本软件按“原样”提供，不带有任何明示或暗示的担保（包括但不限于对适销性、特定用途的适用性及非侵权性的担保）。在使用本软件的过程中，因不可抗力、软件缺陷、错误操作、网络故障或其他原因导致的数据丢失、邮件损坏、隐私泄露或任何直接、间接、偶然、特殊的损害，作者及贡献者概不承担任何法律责任。用户须自行评估风险，并承担因使用本软件所产生的一切后果。
+
 ---
+---
+
+# This project is 100% AI-generated, free from human code pollution.
 
 # FeiniuMail
 
@@ -145,7 +157,7 @@ FeiniuMail is specifically tailored for Feiniu OS, making installation a breeze:
 1. **Download the Package:** Grab the latest FeiniuMail `.fpk` application file from the project's release page.
 2. **Manual Installation:**
    - Log into your Feiniu OS desktop and open the "**App Center**" (应用中心).
-   - Click the "**Manual Install**" (手动安装) button located in the top-right corner or menu.
+   - Click the "**Manual Install**" (手动安装) button located in the bottom-left corner.
    - Select and upload the downloaded `.fpk` file.
    - Follow the simple wizard to configure your service port, click complete, and your deployment is ready to go.
 
@@ -162,3 +174,11 @@ Provided you meet the prerequisite, FeiniuMail is perfect for:
 - **Privacy Advocates & Small Teams:** Professionals dealing with sensitive commercial data who refuse to let third-party cloud mail clients crawl, cache, or analyze their communications.
 - **Migration & Backup Seekers:** Users planning to shut down, leave, or migrate away from an old email account, who need to securely download and indefinitely preserve all historical correspondence beforehand.
 - **Multi-Device Power Users:** People juggling multiple devices (phones, tablets, work laptops) or managing multiple email accounts, seeking a universally consistent web-based inbox experience without installing clients everywhere.
+
+---
+
+## 5. Disclaimer
+
+This project is an amateur, entertainment-oriented open-source endeavor created primarily for personal exploration. **Do not use this software in any commercial environments, corporate settings, or mission-critical production environments.**
+
+This software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors or contributors be liable for any claim, damages, or other liabilities arising from data loss, email corruption, privacy breaches, or any direct, indirect, incidental, or special damages caused by force majeure, software defects, user error, or network failure. Users assume full responsibility for assessing all risks and bear all consequences resulting from the use of this software.
