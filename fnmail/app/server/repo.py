@@ -388,6 +388,15 @@ def get_message_by_uid(ctx, account_id, folder_id, uid):
     )
 
 
+def get_message_by_message_id(ctx, account_id, folder_id, message_id):
+    if not message_id:
+        return None
+    return ctx.db.query_one(
+        "SELECT * FROM messages WHERE account_id = ? AND folder_id = ? AND message_id = ? ORDER BY id LIMIT 1",
+        (int(account_id), int(folder_id), str(message_id)),
+    )
+
+
 def store_message(ctx, account_id, folder_id, folder_kind, uid, parsed, raw, is_read=0, is_starred=0,
                   is_draft=0, remote_flags="", blob_key=None, prefix=None, stamp=None):
     account_id = int(account_id)
@@ -395,6 +404,12 @@ def store_message(ctx, account_id, folder_id, folder_kind, uid, parsed, raw, is_
     existing = None
     if uid:
         existing = get_message_by_uid(ctx, account_id, folder_id, uid)
+    # 本客户端发信时会先把副本归档到本地「已发送」（没有服务器 uid），而邮件服务商
+    # 通常也会在它自己的「已发送」里留一份；IMAP 同步把服务器那份收回来时，两者的
+    # Message-ID 完全相同，但本地那份没有 uid，只按 uid 去重就漏掉了，
+    # 于是同一封邮件在「已发送」里显示两次。这里再按 Message-ID 归并一次。
+    if existing is None:
+        existing = get_message_by_message_id(ctx, account_id, folder_id, parsed.get("message_id"))
     date_ts = int(parsed.get("date_ts") or 0) or now_ts()
     from_list = parsed.get("from_list") or []
     from_name = from_list[0]["name"] if from_list else ""
@@ -412,6 +427,10 @@ def store_message(ctx, account_id, folder_id, folder_kind, uid, parsed, raw, is_
         if raw is not None and not existing["eml_path"]:
             rel = ctx.blobs.save_eml(account_id, folder_kind, folder_id, blob_key or uid, raw, stamp, prefix)
             ctx.db.update("UPDATE messages SET eml_path = ?, size = ? WHERE id = ?", (rel, len(raw), message_id))
+        # 同步回来的副本带着服务器 uid：把它补到本地那条记录上，
+        # 下次同步就能按 uid 直接跳过，不会再重复收取。
+        if uid and not existing["uid"]:
+            ctx.db.update("UPDATE messages SET uid = ? WHERE id = ?", (str(uid), message_id))
         # 重复归档同一封邮件时只保留「已读 / 星标」的最新有效状态，
         # 不能用远端标志把用户本地标记的已读覆盖回未读。
         ctx.db.update(
@@ -480,6 +499,52 @@ def store_message(ctx, account_id, folder_id, folder_kind, uid, parsed, raw, is_
             ),
         )
     return message_id, True
+
+
+def dedup_messages_by_message_id(ctx):
+    """合并历史遗留的重复邮件：同一账号、同一文件夹、同一 Message-ID 只保留一条。
+
+    早期版本发信时会把副本归档到本地「已发送」（没有服务器 uid），而邮件服务商
+    也会在服务器「已发送」保留一份，IMAP 同步把这封邮件收回来时就多出一条记录。
+    这里做一次性清理，避免老用户升级后仍然看到重复。
+
+    保留规则：优先保留本地那份（uid 为空，正文忠实于实际发出的内容），并把服务器
+    uid 补到它上面，其余记录连同附件与 .eml 原文一并删除。返回清理掉的条数。
+    """
+    groups = ctx.db.query(
+        """
+        SELECT account_id, folder_id, message_id
+        FROM messages
+        WHERE message_id <> '' AND is_draft = 0
+        GROUP BY account_id, folder_id, message_id
+        HAVING COUNT(*) > 1
+        """
+    )
+    removed = 0
+    for group in groups:
+        rows = ctx.db.query(
+            """
+            SELECT * FROM messages
+            WHERE account_id = ? AND folder_id = ? AND message_id = ? AND is_draft = 0
+            ORDER BY (uid <> '') ASC, id ASC
+            """,
+            (group["account_id"], group["folder_id"], group["message_id"]),
+        )
+        if len(rows) < 2:
+            continue
+        keep = rows[0]
+        donor_uid = next((row["uid"] for row in rows[1:] if row["uid"]), "")
+        # 先删重复记录再补 uid：messages 上有 (account_id, folder_id, uid) 唯一索引，
+        # 顺序颠倒会与尚未删除的那条冲突。
+        for row in rows[1:]:
+            ctx.db.execute("DELETE FROM attachments WHERE message_id = ?", (row["id"],))
+            ctx.db.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+            if row["eml_path"] and row["eml_path"] != keep["eml_path"]:
+                ctx.blobs.remove(row["eml_path"])
+            removed += 1
+        if donor_uid and not keep["uid"]:
+            ctx.db.update("UPDATE messages SET uid = ? WHERE id = ?", (donor_uid, keep["id"]))
+    return removed
 
 
 def refresh_message_index(ctx, message_id, parsed, folder_kind, folder_id, raw=None):

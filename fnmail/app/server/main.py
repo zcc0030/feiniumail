@@ -33,7 +33,7 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
@@ -75,6 +75,26 @@ class AppContext(object):
             os.chmod(self.data_dir, 0o700)
         except OSError:
             pass
+
+        self._dedup_legacy_duplicates()
+
+    def _dedup_legacy_duplicates(self):
+        """一次性清理历史遗留的重复邮件（同一文件夹、同一 Message-ID）。
+
+        早期版本发信时归档到本地「已发送」的副本没有服务器 uid，IMAP 同步又把这封
+        邮件从服务器「已发送」收了回来，于是同一封邮件显示两次。此处只在首次启动时
+        合并一次，避免老用户升级后仍然看到重复。
+        """
+        if self.db.meta_get("dedup_message_id_v1"):
+            return
+        try:
+            removed = repo.dedup_messages_by_message_id(self)
+        except Exception as exc:
+            self.log("warn", "system", u"合并历史重复邮件失败：%s" % exc)
+            return
+        self.db.meta_set("dedup_message_id_v1", "1")
+        if removed:
+            self.log("info", "system", u"已合并历史重复邮件 %d 封" % removed)
 
     # --- 初始化 ---
     def _load_secret(self):
