@@ -17,6 +17,7 @@ var state = {
   selection: {},
   current: null,
   allowImages: false,
+  bodyFrame: null,
   compose: null,
   syncTimer: null,
   refreshTimer: null
@@ -720,10 +721,37 @@ function openMessage(id) {
 
 function refreshUnreadLocal() { reload().catch(function () { }); }
 
+// 正文 iframe 全生命周期只创建一次：只改 src，绝不从文档里摘除。
+// 原因：Chrome 对被移出文档的 iframe 不会立刻回收其 document，反复打开邮件会累积
+// 几十个文档，最终拖慢整个浏览器（实测连续打开 60 封后 frame 由 4 涨到 124）。
+function ensureBodyFrame(url) {
+  var holder = $('#readPane .read-body');
+  if (!holder) return null;
+  var frame = state.bodyFrame;
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.id = 'bodyFrame';
+    frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    state.bodyFrame = frame;
+  }
+  if (frame.parentNode !== holder) holder.appendChild(frame);
+  if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
+  return frame;
+}
+
+// 离开阅读区时释放正文，避免隐藏的 iframe 继续占用已加载的整篇邮件。
+function detachBodyFrame() {
+  var frame = state.bodyFrame;
+  state.bodyFrame = null;
+  if (!frame) return;
+  if (frame.getAttribute('src') !== 'about:blank') frame.setAttribute('src', 'about:blank');
+  if (frame.parentNode) frame.parentNode.removeChild(frame);
+}
+
 function renderReader() {
   var msg = state.current;
   var pane = $('#readPane');
-  if (!msg) { pane.innerHTML = ''; return; }
+  if (!msg) { detachBodyFrame(); pane.innerHTML = ''; return; }
   var token = encodeURIComponent(state.token);
   var bodyUrl = '/api/messages/' + msg.id + '/body?images=' + (state.allowImages ? 1 : 0) + '&_t=' + token;
   var toList = msg.to || [], ccList = msg.cc || [], bccList = msg.bcc || [];
@@ -770,8 +798,14 @@ function renderReader() {
           '<span class="muted">' + esc(fmtSize(a.size)) + '</span></a>';
       }).join('') + '</div></div>';
   }
-  html += '<div class="read-body"><iframe id="bodyFrame" sandbox="allow-popups allow-popups-to-escape-sandbox" src="' + bodyUrl + '"></iframe></div>';
-  pane.innerHTML = html;
+  // 正文容器（含 iframe）常驻，只替换它之前的部分，iframe 因此始终留在文档中。
+  var head = $('#readHead');
+  if (!head) {
+    pane.innerHTML = '<div id="readHead"></div><div class="read-body"></div>';
+    head = $('#readHead');
+  }
+  head.innerHTML = html;
+  ensureBodyFrame(bodyUrl);
 }
 
 function onReaderClick(event) {
@@ -779,7 +813,7 @@ function onReaderClick(event) {
   if (!btn) return;
   var act = btn.dataset.act;
   var msg = state.current;
-  if (act === 'close-read') { $('#main').classList.remove('reading'); state.current = null; return; }
+  if (act === 'close-read') { detachBodyFrame(); $('#main').classList.remove('reading'); state.current = null; return; }
   if (!msg) return;
   var token = encodeURIComponent(state.token);
   if (act === 'toggle-recipients') {
@@ -792,7 +826,7 @@ function onReaderClick(event) {
   }
   if (act === 'show-images') {
     state.allowImages = true;
-    $('#bodyFrame').src = '/api/messages/' + msg.id + '/body?images=1&_t=' + token;
+    ensureBodyFrame('/api/messages/' + msg.id + '/body?images=1&_t=' + token);
     var banner = $('.read-banner'); if (banner) banner.remove();
     return;
   }

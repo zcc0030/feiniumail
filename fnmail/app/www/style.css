@@ -362,6 +362,9 @@ textarea.addr-box {
   z-index: 5;
 }
 .main.reading .pane-read { display: flex; }
+/* 阅读区头部容器：自身不产生盒子，其子元素直接参与 .pane-read 的纵向 flex 布局。
+   之所以单独包一层，是为了让 .read-body（含正文字 iframe）能常驻不被重建。 */
+#readHead { display: contents; }
 .read-head { padding: 10px 14px; border-bottom: 1px solid var(--line); flex: none; }
 .read-subject { font-size: 16px; font-weight: 600; margin: 2px 0 8px; word-break: break-word; }
 .read-meta { font-size: 12px; color: var(--text-2); line-height: 1.9; }

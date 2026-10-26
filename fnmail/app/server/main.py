@@ -33,7 +33,7 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
