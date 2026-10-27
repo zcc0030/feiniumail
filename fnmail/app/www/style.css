@@ -210,8 +210,13 @@ textarea.addr-box {
 .view-btn:hover { background: #f2f5fa; color: var(--text); }
 .view-btn.is-active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .titlebar-right { margin-left: auto; display: flex; gap: 8px; }
+/* 目录开关：仅小屏显示，用于把侧栏当抽屉收放。 */
+.icon-btn { display: none; padding: 0 10px; font-size: 16px; line-height: 1; }
 
 .layout { display: flex; flex: 1; min-height: 0; }
+
+/* 手机端抽屉背后的遮罩：只在侧栏滑出时出现，挡住下方内容以免误点。 */
+.side-backdrop { display: none; }
 
 /* ---------------------------------------------------------------- 侧栏 */
 
@@ -225,6 +230,8 @@ textarea.addr-box {
   overflow-y: auto;
 }
 .side-block { padding: 10px 8px; border-bottom: 1px solid var(--line); }
+/* 手机端抽屉顶部的收起按钮，仅小屏显示。 */
+.side-mobile-head { display: none; padding: 8px; border-bottom: 1px solid var(--line); justify-content: flex-end; }
 .side-title {
   padding: 2px 8px 6px;
   font-size: 11px;
@@ -694,7 +701,38 @@ table.simple .nowrap { white-space: nowrap; }
   .sidebar { width: 168px; }
 }
 @media (max-width: 620px) {
-  .sidebar { position: absolute; z-index: 20; height: calc(100% - 0px); box-shadow: var(--shadow); }
+  /* 手机上侧栏改为可收放的抽屉：默认收起，点标题栏「☰」滑出，否则它会一直压住
+     右侧的邮件列表与阅读区（附件也在阅读区左侧，被盖住后点不动）。 */
+  #btnSidebar { display: inline-flex; }
+  /* 本就是在独立浏览器里打开的，手机上不再需要「独立打开」这个入口。 */
+  #btnOpenExternal { display: none; }
   .layout { position: relative; }
+  .sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(78vw, 260px);
+    height: auto;
+    z-index: 30;
+    transform: translateX(-101%);
+    transition: transform .22s ease;
+  }
+  body.side-open .sidebar { transform: none; box-shadow: var(--shadow); }
+  .side-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    background: rgba(15, 23, 42, .35);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .22s ease, visibility .22s;
+  }
+  body.side-open .side-backdrop { opacity: 1; visibility: visible; }
+  .side-mobile-head { display: flex; }
+  /* 手指点击需要更大的可点区域。 */
+  .side-item { padding: 10px 8px; }
+  .attach-item { padding: 9px 12px; }
   .msg-from { max-width: 38%; }
 }

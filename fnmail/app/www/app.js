@@ -354,6 +354,7 @@ function pollSync() {
 
 function setView(view) {
   state.view = view;
+  closeSidebar();
   $$('.view-btn').forEach(function (btn) {
     btn.classList.toggle('is-active', btn.dataset.view === view);
   });
@@ -370,11 +371,20 @@ function setView(view) {
 
 /* ===================================================================== 侧栏 */
 
+/* 手机上侧栏是抽屉形态（见 style.css 的 620px 断点）：默认收起，
+   点标题栏的「☰」滑出，选完、点遮罩或点「收起目录」都能收回。 */
+function openSidebar() { document.body.classList.add('side-open'); }
+function closeSidebar() { document.body.classList.remove('side-open'); }
+function toggleSidebar() { document.body.classList.toggle('side-open'); }
+
 function renderSidebar() {
   var side = $('#sidebar');
   if (!state.boot) { side.innerHTML = ''; return; }
   var accounts = state.boot.accounts;
-  var html = '<div class="side-block">';
+  // 抽屉顶部的收起按钮，只在手机上显示。
+  var html = '<div class="side-mobile-head">' +
+    '<button class="btn small" data-act="close-side">✕ 收起目录</button></div>';
+  html += '<div class="side-block">';
   html += '<div class="side-title">全部账号</div>';
   var unread = state.boot.unread || { per_account: {} };
   html += sideItem({
@@ -434,6 +444,7 @@ function sideItem(opt) {
 function onSidebarClick(event) {
   var item = event.target.closest('[data-folder],[data-account],[data-act],[data-kind]');
   if (!item) return;
+  if (item.dataset.act === 'close-side') { closeSidebar(); return; }
   if (item.dataset.act === 'new-folder') { promptNewFolder(); return; }
   if (item.dataset.act === 'add-account') { setView('accounts'); openAccountModal(null); return; }
   if (item.dataset.act === 'goto-contacts') { setView('contacts'); return; }
@@ -2627,6 +2638,8 @@ function promptNewFolder() {
 function bindEvents() {
   $('#splashForm').addEventListener('submit', submitSplash);
   $('#sidebar').addEventListener('click', onSidebarClick);
+  $('#btnSidebar').addEventListener('click', toggleSidebar);
+  $('#sideBackdrop').addEventListener('click', closeSidebar);
   $('#listPane').addEventListener('click', function (event) {
     if (state.view === 'mail') onListPaneClick(event);
     else if (state.view === 'contacts') onContactsClick(event);
