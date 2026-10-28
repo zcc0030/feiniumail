@@ -19,6 +19,7 @@ var state = {
   allowImages: false,
   bodyFrame: null,
   compose: null,
+  refreshPending: false,
   syncTimer: null,
   refreshTimer: null
 };
@@ -168,6 +169,8 @@ function closeModal() {
     $('#modalRoot').classList.add('hidden');
     $('#modalRoot').innerHTML = '';
   }
+  // 写信期间跳过的列表 / 侧栏刷新，在这里一次性补上。
+  if (top && top.options && top.options.cls === 'compose') flushDeferredRefresh();
 }
 
 function closeAllModals() {
@@ -246,10 +249,31 @@ function reload() {
   });
 }
 
+/* 写信弹窗占了 90vw × 90vh，把邮件列表和侧栏整个盖住。这期间重建它们用户看不到，
+   却会和正文输入抢主线程，所以先记一笔待刷新，等写信关闭后再补刷一次。 */
+function composeOpen() {
+  return !!$('.modal.compose');
+}
+
+function deferRefreshWhileComposing() {
+  if (!composeOpen()) return false;
+  state.refreshPending = true;
+  return true;
+}
+
+function flushDeferredRefresh() {
+  if (!state.refreshPending || composeOpen()) return;
+  state.refreshPending = false;
+  reload().then(function () {
+    if (state.view === 'mail') loadMessages();
+  }).catch(function () { });
+}
+
 function startTimers() {
   stopTimers();
   state.refreshTimer = setInterval(function () {
     if (state.view !== 'mail') return;
+    if (deferRefreshWhileComposing()) return;
     reload().catch(function () { });
   }, 45000);
   state.syncTimer = setInterval(pollSync, 1800);
@@ -337,6 +361,7 @@ function pollSync() {
   if (!busy.length) {
     if (state.lastBusy) {
       state.lastBusy = false;
+      if (deferRefreshWhileComposing()) return;
       reload().then(function () { renderAccountStatus(); loadMessages(); }).catch(function () { });
     }
     return;
@@ -1776,6 +1801,8 @@ function sendCompose(asDraft) {
     ? api('/api/drafts', { method: 'POST', body: payload })
     : api('/api/messages/send', { method: 'POST', body: payload });
   promise.then(function (data) {
+    // 下面紧接着就会刷新列表，不必再让关闭写信时的补刷多跑一遍。
+    state.refreshPending = false;
     closeModal();
     state.compose = null;
     if (asDraft) {
