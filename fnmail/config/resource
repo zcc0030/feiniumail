@@ -2,7 +2,10 @@
     "data-share": {
         "shares": [
             {
-                "name": "fnmail/mailbox"
+                "name": "fnmail/mailbox",
+                "permission": {
+                    "rw": ["fnmail"]
+                }
             }
         ]
     }

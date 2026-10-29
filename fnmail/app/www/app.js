@@ -829,9 +829,10 @@ function renderReader() {
   if (msg.attachments && msg.attachments.length) {
     html += '<div class="attach-box"><div class="muted">附件（' + msg.attachments.length + '）</div><div class="attach-list">' +
       msg.attachments.map(function (a) {
-        return '<a class="attach-item" href="/api/messages/' + msg.id + '/parts/' + a.part_index + '?_t=' + token + '">' +
+        return '<button type="button" class="attach-item" data-act="attach-menu" data-index="' + a.part_index +
+          '" data-name="' + esc(a.filename || '') + '">' +
           '<span>📎</span><span class="name" title="' + esc(a.filename) + '">' + esc(a.filename || '附件') + '</span>' +
-          '<span class="muted">' + esc(fmtSize(a.size)) + '</span></a>';
+          '<span class="muted">' + esc(fmtSize(a.size)) + '</span></button>';
       }).join('') + '</div></div>';
   }
   // 正文容器（含 iframe）常驻，只替换它之前的部分，iframe 因此始终留在文档中。
@@ -852,6 +853,10 @@ function onReaderClick(event) {
   if (act === 'close-read') { detachBodyFrame(); $('#main').classList.remove('reading'); state.current = null; return; }
   if (!msg) return;
   var token = encodeURIComponent(state.token);
+  if (act === 'attach-menu') {
+    openAttachmentMenu(msg, Number(btn.dataset.index), btn.dataset.name);
+    return;
+  }
   if (act === 'toggle-recipients') {
     // 直接切换样式类，避免重绘整个阅读区（重绘会重新加载正文 iframe）。
     var meta = $('.read-meta');
@@ -936,6 +941,163 @@ function onReaderClick(event) {
     }
     return;
   }
+}
+
+/* ===================================================================== 附件操作 */
+
+// 飞牛桌面里的页面可以借助官方 JS SDK 调起宿主能力（用系统默认应用打开文件）。
+// SDK 是 ESM 包，这里用动态 import 懒加载；独立浏览器中没有宿主，能力探测会失败，
+// 所有失败路径都退化成「下载」，保证附件始终能被取走。
+var fnosSdkPromise = null;
+
+function loadFnOsSdk() {
+  if (!fnosSdkPromise) {
+    fnosSdkPromise = import('/vendor/trim-web-app.js').then(function (mod) {
+      var Ctor = mod && (mod.TrimApp || mod.default);
+      return Ctor ? new Ctor() : null;
+    }).catch(function () { return null; });
+  }
+  return fnosSdkPromise;
+}
+
+// isStandaloneWeb 为 true 表示页面跑在独立浏览器里，没有宿主可以调起。
+function sdkHasHost(sdk) {
+  return !!(sdk && sdk.isStandaloneWeb === false && typeof sdk.openFile === 'function');
+}
+
+// 桌面窗口里的这一页持有宿主能力，把「用系统默认应用打开」挂到 window 上，
+// 好让由本页 window.open 出来的独立标签页借道调用（同源，可直接跨窗口访问）。
+window.__fnmailHostOpenFile = function (path) {
+  return loadFnOsSdk().then(function (sdk) {
+    if (!sdkHasHost(sdk)) throw new Error('当前环境无法调起系统应用');
+    return Promise.resolve(sdk.openFile(path));
+  });
+};
+
+// 独立网页（浏览器直连 IP:端口）自己是顶层窗口，没有宿主；但若它是由桌面窗口里的
+// 「独立打开」按钮弹出的，window.opener 仍指向那个带宿主的窗口且与本页同源，于是可以
+// 借它调起系统应用。手动输入网址打开时没有 opener，只能下载。
+function openerHostOpenFile() {
+  var opener = null;
+  try { opener = window.opener; } catch (e) { opener = null; }
+  if (!opener || opener === window) return null;
+  try {
+    var fn = opener.__fnmailHostOpenFile;
+    return typeof fn === 'function' ? fn : null;
+  } catch (e) {
+    return null; // 跨域取不到，视为不可借道
+  }
+}
+
+function triggerDownload(url) {
+  var link = document.createElement('a');
+  link.href = url;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+// 「借道桌面窗口打开」时的弹窗拦截提示是否不再显示，记在本地。
+var ATTACH_TIP_KEY = 'fnmail_attach_host_tip';
+
+function attachTipMuted() {
+  try { return localStorage.getItem(ATTACH_TIP_KEY) === 'off'; } catch (e) { return false; }
+}
+
+function muteAttachTip() {
+  try { localStorage.setItem(ATTACH_TIP_KEY, 'off'); } catch (e) { /* 隐私模式下忽略 */ }
+}
+
+// 独立网页里「借道桌面窗口打开」时，真正新开窗口的是那个桌面窗口，用户当前这一次点击
+// 的手势传不过去，浏览器容易把弹出的窗口当成广告拦下来，表现为「点了没反应」。首次使用
+// 时说清楚，并提供「以后不再提示」的选择。
+function openAttachHostTip(proceed) {
+  openModal(modalHeader('关于「用 NAS 默认应用打开」') +
+    '<div class="modal-body">' +
+    '<p>本页是在独立浏览器标签中打开的，飞牛系统的运行环境并不在这里，所以要<b>借道</b>打开它的那个飞牛桌面窗口来调起系统应用。</p>' +
+    '<p>这样一来，真正的文件窗口是由桌面窗口新开的，浏览器可能把它判为弹出窗口而拦下来，表现为<b>点按后没有反应</b>。</p>' +
+    '<p>同时请注意：<b>允许弹窗，以及查看 / 在线编辑文件，都要回到飞牛桌面所在的那个页面（标签页）去操作</b>，文件会在那里打开。</p>' +
+    '<p>如果遇到点按没反应，请在浏览器地址栏右侧的「弹出窗口已被拦截」图标中允许本 NAS 地址弹出窗口，再回到飞牛桌面所在页面重试一次即可。</p>' +
+    '</div>' +
+    '<div class="modal-foot">' +
+    '<label class="tip-mute"><input type="checkbox" id="attachTipMute"> 以后不再提示</label>' +
+    '<div class="spacer"></div>' +
+    '<button class="btn ghost" data-tip="cancel">取消</button>' +
+    '<button class="btn primary" data-tip="go">继续打开</button>' +
+    '</div>', {
+    onMount: function (wrapper) {
+      wrapper.addEventListener('click', function (event) {
+        var pick = event.target.closest('[data-tip]');
+        if (!pick) return;
+        var box = $('#attachTipMute', wrapper);
+        if (box && box.checked) muteAttachTip();
+        closeModal();
+        if (pick.dataset.tip === 'go') proceed();
+      });
+    }
+  });
+}
+
+function openAttachmentMenu(msg, index, name) {
+  var label = name || '附件';
+  var downloadUrl = '/api/messages/' + msg.id + '/parts/' + index + '?_t=' + encodeURIComponent(state.token);
+  loadFnOsSdk().then(function (sdk) {
+    var selfHosted = sdkHasHost(sdk);
+    var canOpen = selfHosted || !!openerHostOpenFile();
+    var hint = selfHosted
+      ? '「打开」会交给飞牛系统的默认应用处理，打开方式与文件管理一致（Office 文档将直接进入在线编辑）。'
+      : (canOpen
+        ? '本页是独立网页，自身无法调起系统应用；将借道打开它的飞牛桌面窗口来打开该附件，文件也会显示在那个页面里。'
+        : '本页是用网址 / IP 直接打开的，浏览器里没有飞牛系统的运行环境，因此无法调起 NAS 上的应用来在线打开附件。' +
+          '若想在线打开，请在飞牛桌面窗口中进入本应用（或在桌面窗口内点「独立打开」打开本页），再点按附件即可选择「用 NAS 默认应用打开」；' +
+          '现在也可以直接下载到本地后再打开。');
+    openModal(modalHeader('附件') +
+      '<div class="modal-body">' +
+      '<div class="attach-target"><span>📎</span><span class="name" title="' + esc(label) + '">' + esc(label) + '</span></div>' +
+      '<div class="attach-actions">' +
+      (canOpen ? '<button class="btn primary block" data-attach="open">用 NAS 默认应用打开</button>' : '') +
+      '<button class="btn block" data-attach="download">直接下载</button>' +
+      '<div class="hint">' + hint + '</div>' +
+      '</div>' +
+      '</div>' +
+      '<div class="modal-foot"><div class="spacer"></div>' +
+      '<button class="btn ghost" data-act="close-modal">关闭</button></div>', {
+      onMount: function (wrapper) {
+        wrapper.addEventListener('click', function (event) {
+          var pick = event.target.closest('[data-attach]');
+          if (!pick) return;
+          var mode = pick.dataset.attach;
+          closeModal();
+          if (mode === 'download') { triggerDownload(downloadUrl); return; }
+          // 借道桌面窗口时，先说明弹窗可能被拦截，再实际调起；用户可选不再提示。
+          if (!selfHosted && !attachTipMuted()) {
+            openAttachHostTip(function () { openAttachmentByHost(msg, index, label, downloadUrl); });
+            return;
+          }
+          openAttachmentByHost(msg, index, label, downloadUrl);
+        });
+      }
+    });
+  });
+}
+
+function openAttachmentByHost(msg, index, label, downloadUrl) {
+  toast('正在准备「' + label + '」…');
+  api('/api/messages/' + msg.id + '/parts/' + index + '/export', { method: 'POST' })
+    .then(function (data) {
+      return loadFnOsSdk().then(function (sdk) {
+        if (sdkHasHost(sdk)) return Promise.resolve(sdk.openFile(data.path));
+        var bridge = openerHostOpenFile();
+        if (bridge) return Promise.resolve(bridge(data.path));
+        throw new Error('当前环境无法调起系统应用');
+      });
+    })
+    .then(function () { toast('已用系统默认应用打开', 'ok'); })
+    .catch(function (err) {
+      toast((err && err.message ? err.message : '打开失败') + '，已改为下载', 'err');
+      triggerDownload(downloadUrl);
+    });
 }
 
 function quoteHtml(msg, withHeader) {

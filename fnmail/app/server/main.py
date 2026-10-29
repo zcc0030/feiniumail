@@ -7,6 +7,7 @@
 import argparse
 import base64
 import collections
+import glob
 import json
 import mimetypes
 import os
@@ -33,7 +34,7 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.24"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
@@ -230,6 +231,42 @@ def content_disposition(filename, inline=False):
     ascii_name = ascii_name.replace('"', "_").replace("\\", "_")
     disposition = "inline" if inline else "attachment"
     return "%s; filename=\"%s\"; filename*=UTF-8''%s" % (disposition, ascii_name, quote(filename))
+
+
+# --------------------------------------------------------------------------- 附件导出
+#
+# 邮件附件平时只存在于 .eml 内部，没有独立的文件路径，系统无法用默认应用打开它。
+# 这里在用户点「用系统默认应用打开」时把附件落到应用声明的共享目录里，再把真实
+# 路径交给前端的 fnOS SDK openFile()。共享目录由 config/resource 的 data-share
+# 声明，安装后位于 <应用根目录>/shares/ 下。
+
+EXPORT_SHARE_NAME = "fnmail/mailbox"
+
+
+def export_root(ctx):
+    """附件导出目录。
+
+    附件只为「用默认应用打开」而临时落盘：系统需要的是 /vol?/@appshare/…
+    这样真实存在的物理路径，所以必须写进 config/resource 声明的共享目录。
+    安装卷不固定、shares 下又是软链接，因此按候选顺序探测第一个存在的目录。
+    """
+    app_root = os.path.dirname(os.path.abspath(ctx.app_dir))
+    candidates = [
+        os.path.join(app_root, "shares", *EXPORT_SHARE_NAME.split("/")),
+        os.path.join(app_root, "shares", EXPORT_SHARE_NAME.split("/")[-1]),
+    ]
+    candidates.extend(sorted(glob.glob("/vol*/@appshare/" + EXPORT_SHARE_NAME)))
+    for base in candidates:
+        if os.path.isdir(base):
+            return os.path.join(base, "attachments")
+    return os.path.join(candidates[0], "attachments")
+
+
+def safe_filename(name):
+    """把附件名收敛成一个安全的单层文件名。"""
+    name = os.path.basename((name or "").replace("\\", "/")).strip()
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(". ")
+    return (name or "attachment")[:120]
 
 
 # --------------------------------------------------------------------------- 数据装配
@@ -819,6 +856,31 @@ def api_message_part(ctx, req, params):
     inline = req.param("inline") == "1"
     headers = {"Content-Disposition": content_disposition(part["filename"], inline=inline)}
     req.handler.send_bytes(part["data"], part["content_type"] or "application/octet-stream", extra_headers=headers)
+
+
+@route("POST", r"/api/messages/(?P<message_id>\d+)/parts/(?P<index>\d+)/export")
+def api_message_part_export(ctx, req, params):
+    """把附件落成一个真实文件，返回它的绝对路径，供系统用默认应用打开。"""
+    row = repo.get_message(ctx, params["message_id"])
+    if row is None:
+        raise ApiError(u"邮件不存在", 404)
+    raw = ctx.blobs.read(row.get("eml_path"))
+    if not raw:
+        raise ApiError(u"邮件原文缺失", 404)
+    part = mailparser.part_payload_safe(raw, int(params["index"]))
+    if part is None:
+        raise ApiError(u"附件不存在", 404)
+
+    name = safe_filename(part["filename"])
+    folder = os.path.join(export_root(ctx), "%s_%s" % (row["id"], params["index"]))
+    try:
+        os.makedirs(folder, exist_ok=True)
+        target = os.path.join(folder, name)
+        with open(target, "wb") as fh:
+            fh.write(part["data"])
+    except OSError as exc:
+        raise ApiError(u"导出附件失败：%s" % exc, 500)
+    req.send_json({"path": os.path.realpath(target), "name": name, "size": len(part["data"])})
 
 
 @route("POST", r"/api/messages/(?P<message_id>\d+)/read")

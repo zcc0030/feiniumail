@@ -432,6 +432,32 @@ textarea.addr-box {
 }
 .attach-item:hover { border-color: var(--brand); color: var(--brand); }
 .attach-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+/* 附件项是按钮，需要显式继承字体并给出可点击光标 */
+button.attach-item { font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+/* 附件操作弹窗 */
+.attach-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfcfe;
+  font-size: 13px;
+}
+.attach-target .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-actions .btn + .btn { margin-top: 8px; }
+.attach-actions .hint { margin-top: 10px; }
+/* 「借道打开」提示弹窗底部的「以后不再提示」勾选 */
+.modal-foot .tip-mute {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: pointer;
+}
 .read-body { flex: 1; min-height: 0; background: #fff; }
 .read-body iframe { display: block; width: 100%; height: 100%; border: 0; }
 .read-text {
