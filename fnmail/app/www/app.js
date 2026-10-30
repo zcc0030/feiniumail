@@ -21,7 +21,9 @@ var state = {
   compose: null,
   refreshPending: false,
   syncTimer: null,
-  refreshTimer: null
+  refreshTimer: null,
+  mailSig: '',    // 邮箱指纹：后台刷新时用来判断有没有任何变化
+  mailTotal: 0    // 收件箱里的邮件总数：用来判断是不是「新到」了邮件
 };
 
 function $(sel, root) { return (root || document).querySelector(sel); }
@@ -243,10 +245,58 @@ function enterApp() {
 
 function reload() {
   return api('/api/bootstrap').then(function (data) {
-    state.boot = data;
+    applyBoot(data);
     renderSidebar();
     return data;
   });
+}
+
+/* 定时刷新与「新邮件」检测共用同一份 bootstrap 数据。applyBoot 记下邮箱指纹，
+   refreshMailbox 靠指纹有没有变来决定要不要重绘：没变就什么都不做，避免在用户
+   阅读时无谓地重建侧栏和邮件列表。 */
+function applyBoot(data) {
+  state.boot = data;
+  state.mailSig = mailboxSignature(data);
+  state.mailTotal = inboxTotal(data);
+  updateTitle();
+}
+
+/* 收件箱（含垃圾箱）里的邮件总数。新邮件到达只会让这个数变大，
+   而「发信后归档到已发送」「保存草稿」都不会影响它，因此用它判断有没有新来信。 */
+function inboxTotal(boot) {
+  var sum = 0;
+  ((boot && boot.folders) || []).forEach(function (folder) {
+    if (folder.kind === 'inbox' || folder.kind === 'junk') sum += Number(folder.total) || 0;
+  });
+  return sum;
+}
+
+function mailboxSignature(boot) {
+  if (!boot) return '';
+  var parts = [(boot.accounts || []).length];
+  (boot.folders || []).forEach(function (folder) {
+    parts.push(folder.id + ':' + (folder.total || 0) + ':' + (folder.unread || 0));
+  });
+  return parts.join('|');
+}
+
+/* 后台轮询：邮件一到就自动刷新侧栏未读与右侧列表，不必用户手动点一下。
+   之前只重建了侧栏，右侧列表要等用户点账号 / 收件箱才会更新，所以看上去「收不到」新邮件。
+   force 用于写信关闭后的补刷：无论指纹有没有变都重绘一次。 */
+function refreshMailbox(options) {
+  options = options || {};
+  if (!state.boot || !state.token) return Promise.resolve();
+  if (deferRefreshWhileComposing()) return Promise.resolve();  // 写信期间不打断输入，关闭写信后再补刷
+  var prevTotal = state.mailTotal;
+  return api('/api/bootstrap').then(function (data) {
+    var changed = mailboxSignature(data) !== state.mailSig;
+    var arrived = inboxTotal(data) - prevTotal;
+    applyBoot(data);
+    if (!changed && !options.force) return;
+    renderSidebar();
+    if (state.view === 'mail') loadMessages({ quiet: true });
+    if (arrived > 0) notifyNewMail(arrived);
+  }).catch(function () { });
 }
 
 /* 写信弹窗占了 90vw × 90vh，把邮件列表和侧栏整个盖住。这期间重建它们用户看不到，
@@ -264,18 +314,14 @@ function deferRefreshWhileComposing() {
 function flushDeferredRefresh() {
   if (!state.refreshPending || composeOpen()) return;
   state.refreshPending = false;
-  reload().then(function () {
-    if (state.view === 'mail') loadMessages();
-  }).catch(function () { });
+  refreshMailbox({ force: true });
 }
 
 function startTimers() {
   stopTimers();
-  state.refreshTimer = setInterval(function () {
-    if (state.view !== 'mail') return;
-    if (deferRefreshWhileComposing()) return;
-    reload().catch(function () { });
-  }, 45000);
+  // 10 秒一轮：新邮件到得比较快（收信间隔最小 60 秒），指纹没变时开销只有一次
+  // bootstrap 查询加一次字符串比较，没有必要轮询得太稀疏。
+  state.refreshTimer = setInterval(refreshMailbox, 10000);
   state.syncTimer = setInterval(pollSync, 1800);
 }
 
@@ -292,11 +338,13 @@ function doLogout() {
     localStorage.removeItem(TOKEN_KEY);
     stopTimers();
     state.boot = null;
+    document.title = '肥牛邮箱';
     state.list = null;
     state.current = null;
     state.selection = {};
     state.allowImages = false;
     closeAllModals();
+    clearMailNotices();
     showSplash('login', '');
   });
 }
@@ -362,7 +410,8 @@ function pollSync() {
     if (state.lastBusy) {
       state.lastBusy = false;
       if (deferRefreshWhileComposing()) return;
-      reload().then(function () { renderAccountStatus(); loadMessages(); }).catch(function () { });
+      // 刚收完信：交给统一的刷新逻辑，顺带把「新邮件」提醒发出去。
+      refreshMailbox().then(function () { renderAccountStatus(); });
     }
     return;
   }
@@ -454,6 +503,7 @@ function renderSidebar() {
     '<button class="btn small" data-act="add-account">新建账号</button>' +
     '<button class="btn small" data-act="goto-contacts">通讯录</button>' +
     '<button class="btn small" data-act="goto-tools">端口检测</button>' +
+    '<button class="btn small" data-act="notify-toggle">' + esc(notifyLabel()) + '</button>' +
     '</div>';
   side.innerHTML = html;
 }
@@ -474,6 +524,7 @@ function onSidebarClick(event) {
   if (item.dataset.act === 'add-account') { setView('accounts'); openAccountModal(null); return; }
   if (item.dataset.act === 'goto-contacts') { setView('contacts'); return; }
   if (item.dataset.act === 'goto-tools') { setView('tools'); return; }
+  if (item.dataset.act === 'notify-toggle') { toggleNotify(); return; }
   if (item.dataset.folder) {
     state.target = { accountId: Number(item.dataset.account), folderId: Number(item.dataset.folder), kind: null };
     state.page = 1; state.selection = {};
@@ -494,6 +545,144 @@ function onSidebarClick(event) {
     state.page = 1; state.selection = {};
     setView('mail');
   }
+}
+
+/* ===================================================================== 新邮件通知 */
+
+var NOTIFY_KEY = 'fnmail_notify';
+
+/* 新邮件有两层提醒，互不依赖：
+   1) 页面内的提醒卡片（showMailNotice）——不经过浏览器权限，任何访问方式都生效，
+      用 IP:端口 直连、或浏览器不给系统通知时，靠它兜底；
+   2) 浏览器的系统通知（Notification）——只在 https/localhost 等安全上下文里，
+      且用户允许之后才有，是切到别的标签页时的补充。
+   因此「系统通知」开关关掉不影响页面内提醒。 */
+
+/* 飞牛桌面窗口里的应用是 iframe。浏览器要求父页面给跨域 iframe 显式放行（allow="notifications"）
+   才允许其申请通知权限，这一项由宿主决定、应用改不了，所以命中时直接引导用户去独立窗口。 */
+function notifyInIframe() {
+  try { return window.self !== window.top; } catch (e) { return true; }
+}
+
+function notifySupported() {
+  return typeof Notification !== 'undefined' && window.isSecureContext === true;
+}
+
+function notifyOn() {
+  return notifySupported() && Notification.permission === 'granted' &&
+    localStorage.getItem(NOTIFY_KEY) === '1';
+}
+
+function notifyLabel() {
+  return notifyOn() ? '🔔 系统通知：开' : '🔕 系统通知：关';
+}
+
+/* 逐条判断系统通知能不能开，失败时把真正的原因说清楚：
+   浏览器不支持 / 不是安全上下文 / 浏览器拒绝授权，而不是笼统地说一句「不支持」。 */
+function toggleNotify() {
+  if (localStorage.getItem(NOTIFY_KEY) === '1') {
+    localStorage.setItem(NOTIFY_KEY, '0');
+    renderSidebar();
+    toast('已关闭系统通知（页面内的新邮件提醒仍然有效）', '');
+    return;
+  }
+  if (typeof Notification === 'undefined') {
+    toast('当前浏览器不提供系统通知；新邮件仍会在页面右上角提示', 'err');
+    return;
+  }
+  if (window.isSecureContext !== true) {
+    toast('浏览器只在 HTTPS（或 localhost）下提供系统通知；新邮件仍会在页面右上角提示', 'err');
+    return;
+  }
+  Notification.requestPermission().then(function (permission) {
+    if (permission !== 'granted') {
+      toast(notifyInIframe()
+        ? '飞牛桌面窗口里浏览器不允许网页申请通知权限：请点标题栏的「独立打开」，在独立窗口中开启；页面内的新邮件提醒不受影响'
+        : '浏览器未允许通知：请在地址栏的站点设置里允许通知后重试', 'err');
+      return;
+    }
+    localStorage.setItem(NOTIFY_KEY, '1');
+    renderSidebar();
+    toast('已开启系统通知', 'ok');
+    try { new Notification('肥牛邮箱', { body: '新邮件通知已开启', icon: '/images/icon_64.png' }); } catch (e) { }
+  }).catch(function () { });
+}
+
+/* 标题栏未读数：即使浏览器不给系统通知，切到别的标签页时也能一眼看到有新邮件。 */
+function updateTitle() {
+  var unread = (state.boot && state.boot.unread && state.boot.unread.total) || 0;
+  document.title = (unread ? '(' + unread + ') ' : '') + '肥牛邮箱';
+}
+
+var NOTIFY_CARD_MS = 10000;   // 单条提醒卡片的停留时间
+var NOTIFY_CARD_MAX = 3;      // 同时最多叠几张，超出的从最早的开始挤掉
+
+function clearMailNotices() {
+  var root = $('#notifyRoot');
+  if (root) root.innerHTML = '';
+}
+
+/* 右上角浮出提醒卡片：点一下直接打开那封新邮件，也可以点「✕」关掉。 */
+function showMailNotice(items, count) {
+  var root = $('#notifyRoot');
+  if (!root) return;
+  var top = (items && items[0]) || null;
+  var from = top ? (top.from_name || top.from_addr || '未知发件人') : '未知发件人';
+  var subject = top ? (top.subject || '(无主题)') : '';
+  var more = count > 1 ? '（另有 ' + (count - 1) + ' 封）' : '';
+
+  var card = document.createElement('div');
+  card.className = 'notify-card';
+  card.innerHTML =
+    '<span class="n-ico">📨</span>' +
+    '<div class="n-body">' +
+    '<div class="n-title">新邮件 · ' + count + ' 封</div>' +
+    '<div class="n-from">' + esc(from) + '</div>' +
+    '<div class="n-subject">' + esc(subject) + esc(more) + '</div>' +
+    '</div>' +
+    '<button type="button" class="n-close" title="关闭提醒">✕</button>';
+
+  var timer = setTimeout(dismiss, NOTIFY_CARD_MS);
+
+  function dismiss() {
+    clearTimeout(timer);
+    card.classList.remove('is-in');
+    setTimeout(function () { card.remove(); }, 220);
+  }
+
+  card.addEventListener('click', function (event) {
+    if (event.target.closest('.n-close')) { dismiss(); return; }
+    dismiss();
+    if (state.view !== 'mail') setView('mail');
+    if (top) openMessage(top.id);
+  });
+
+  root.appendChild(card);
+  // 先以初始态插入，下一帧再进入，否则过渡不会播放。
+  requestAnimationFrame(function () { card.classList.add('is-in'); });
+  var cards = root.querySelectorAll('.notify-card');
+  for (var i = 0; i < cards.length - NOTIFY_CARD_MAX; i++) cards[i].remove();
+}
+
+/* 新邮件到达：页面内卡片始终提醒；已开启系统通知时，再补一条带发件人与主题的。 */
+function notifyNewMail(count) {
+  api('/api/messages', { params: { kind: 'inbox', filter: 'unread', page: 1, size: 3 } })
+    .then(function (data) {
+      var items = (data && data.items) || [];
+      var top = items[0] || null;
+      showMailNotice(items, count);
+      if (!notifyOn()) return;
+      var from = top ? (top.from_name || top.from_addr || '未知发件人') : '肥牛邮箱';
+      var subject = top ? (top.subject || '(无主题)') : '收到新邮件';
+      try {
+        new Notification(from, {
+          body: subject + (count > 1 ? '（另有 ' + (count - 1) + ' 封）' : ''),
+          icon: '/images/icon_64.png',
+          tag: 'fnmail-new-mail'
+        });
+      } catch (e) { }
+    })
+    .catch(function () { showMailNotice([], count); });
 }
 
 /* ===================================================================== 邮件列表 */
@@ -534,10 +723,14 @@ function currentFolderName() {
   return (account ? (account.name || account.email) : '') + ' · 收件箱';
 }
 
-function loadMessages() {
+function loadMessages(options) {
+  options = options || {};
   var body = $('#listBody');
   if (!body) return;
-  body.innerHTML = '<div class="empty">正在加载…</div>';
+  // quiet 用于后台自动刷新：不显示「正在加载…」，也不让列表弹回顶部，
+  // 免得打断正在翻阅旧邮件的用户。
+  var scrollTop = body.scrollTop;
+  if (!options.quiet) body.innerHTML = '<div class="empty">正在加载…</div>';
   var params = {
     page: state.page,
     size: 50,
@@ -552,7 +745,9 @@ function loadMessages() {
   api('/api/messages', { params: params }).then(function (data) {
     state.list = data;
     renderMessageList();
+    if (options.quiet) body.scrollTop = scrollTop;
   }).catch(function (err) {
+    if (options.quiet) return;  // 自动刷新失败时保留原列表，不把用户已经看到的内容换成错误提示
     body.innerHTML = '<div class="empty">加载失败：' + esc(err.message) + '</div>';
   });
 }

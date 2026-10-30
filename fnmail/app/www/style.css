@@ -717,6 +717,66 @@ table.simple .nowrap { white-space: nowrap; }
 }
 .progress > i { display: block; height: 100%; background: var(--brand); transition: width .25s; }
 
+/* ---------------------------------------------------------------- 新邮件提醒 */
+
+/* 页面内的新邮件卡片：右下角是可关闭的 toast，这里放的是「值得点开看一眼」的提醒，
+   所以固定在右上角，点卡片即可直接打开那封邮件。它不依赖任何浏览器权限，
+   用 IP:端口 直连时同样有效，是系统通知不可用时的兜底。 */
+.notify-root {
+  position: fixed;
+  top: 68px;
+  right: 16px;
+  z-index: 40;   /* 在正文之上、弹窗（50）之下，写信时不会盖住写信窗口 */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.notify-card {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity .2s ease, transform .2s ease, border-color .15s;
+}
+.notify-card.is-in { opacity: 1; transform: none; }
+.notify-card:hover { border-color: #cfd6e0; border-left-color: var(--brand-dark); }
+
+.notify-card .n-ico { font-size: 18px; line-height: 1.25; }
+.notify-card .n-body { flex: 1; min-width: 0; }
+.notify-card .n-title { font-size: 12px; font-weight: 600; color: var(--brand); }
+.notify-card .n-from {
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notify-card .n-subject {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notify-card .n-close {
+  flex: none;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.notify-card .n-close:hover { background: #eef2f7; color: var(--text); }
+
 /* ---------------------------------------------------------------- 小窗口适配 */
 
 @media (max-width: 860px) {
@@ -725,6 +785,8 @@ table.simple .nowrap { white-space: nowrap; }
   .views { order: 3; flex: 1 1 100%; overflow-x: auto; }
   .titlebar { height: auto; flex-wrap: wrap; padding: 8px 10px; }
   .sidebar { width: 168px; }
+  /* 标题栏会折行变高，提醒卡片相应下移，避免压住按钮。 */
+  .notify-root { top: 96px; right: 10px; }
 }
 @media (max-width: 620px) {
   /* 手机上侧栏改为可收放的抽屉：默认收起，点标题栏「☰」滑出，否则它会一直压住
