@@ -2715,7 +2715,7 @@ function openAccountModal(account) {
     '  <div class="switch-row"><input type="checkbox" id="acUseIn"' + (account.out_use_in_auth ? ' checked' : '') + '>' +
     '    <label for="acUseIn">发信时使用与收信相同的用户名和密码</label></div>' +
     '  <div class="switch-row"><input type="checkbox" id="acSaveSent"' + (account.save_sent_to_server ? ' checked' : '') + '>' +
-    '    <label for="acSaveSent">发信后把副本同步到服务器「已发送」（仅 IMAP）</label></div>' +
+    '    <label for="acSaveSent">发信后把副本同步到服务器「已发送」（仅 IMAP）<small class="hint">默认关闭。开启后副本会写进服务器「已发送」，若该邮箱同时被 QQ邮箱等客户端「代收」，副本可能被扫进对方的收件箱；肥牛邮箱本地始终保留已发送副本，无需开启</small></label></div>' +
     '  <hr style="border:none;border-top:1px solid #e4e8ee;margin:6px 0 14px">' +
     '  <div class="switch-row"><input type="checkbox" id="acSyncEnabled"' + (account.sync_enabled ? ' checked' : '') + '>' +
     '    <label for="acSyncEnabled">自动收取新邮件</label></div>' +
