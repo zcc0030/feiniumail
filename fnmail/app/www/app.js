@@ -167,6 +167,10 @@ function openModal(html, options) {
 function closeModal() {
   var top = modalStack.pop();
   if (top && top.layer && top.layer.parentNode) top.layer.parentNode.removeChild(top.layer);
+  // 预览弹层要借这个回调释放 Worker、ObjectURL 之类的资源。
+  if (top && top.options && typeof top.options.onClose === 'function') {
+    try { top.options.onClose(); } catch (e) { /* 关闭过程的异常不影响界面 */ }
+  }
   if (!modalStack.length) {
     $('#modalRoot').classList.add('hidden');
     $('#modalRoot').innerHTML = '';
@@ -1237,6 +1241,9 @@ function openAttachHostTip(proceed) {
 function openAttachmentMenu(msg, index, name) {
   var label = name || '附件';
   var downloadUrl = '/api/messages/' + msg.id + '/parts/' + index + '?_t=' + encodeURIComponent(state.token);
+  var previewUrl = '/api/messages/' + msg.id + '/parts/' + index + '?inline=1&_t=' + encodeURIComponent(state.token);
+  // 预览完全在浏览器里渲染，跟有没有飞牛宿主无关，所以放在最前面。
+  var canPreview = !!(window.FnmailPreview && window.FnmailPreview.canPreview(label));
   loadFnOsSdk().then(function (sdk) {
     var selfHosted = sdkHasHost(sdk);
     var canOpen = selfHosted || !!openerHostOpenFile();
@@ -1251,7 +1258,9 @@ function openAttachmentMenu(msg, index, name) {
       '<div class="modal-body">' +
       '<div class="attach-target"><span>📎</span><span class="name" title="' + esc(label) + '">' + esc(label) + '</span></div>' +
       '<div class="attach-actions">' +
-      (canOpen ? '<button class="btn primary block" data-attach="open">用 NAS 默认应用打开</button>' : '') +
+      (canPreview ? '<button class="btn primary block" data-attach="preview">在线预览</button>' : '') +
+      (canPreview ? '<div class="hint">「在线预览」直接在本页渲染，不需要 NAS 上的 Office / PDF 应用，也不会上传文件。</div>' : '') +
+      (canOpen ? '<button class="btn' + (canPreview ? '' : ' primary') + ' block" data-attach="open">用 NAS 默认应用打开</button>' : '') +
       '<button class="btn block" data-attach="download">直接下载</button>' +
       '<div class="hint">' + hint + '</div>' +
       '</div>' +
@@ -1263,6 +1272,11 @@ function openAttachmentMenu(msg, index, name) {
           var pick = event.target.closest('[data-attach]');
           if (!pick) return;
           var mode = pick.dataset.attach;
+          if (mode === 'preview') {
+            closeModal();
+            window.FnmailPreview.open({ name: label, url: previewUrl, downloadUrl: downloadUrl });
+            return;
+          }
           closeModal();
           if (mode === 'download') { triggerDownload(downloadUrl); return; }
           // 借道桌面窗口时，先说明弹窗可能被拦截，再实际调起；用户可选不再提示。

@@ -34,12 +34,18 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.27"
+APP_VERSION = "1.0.28"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
 # 调整时需与 mailsend.MAX_TOTAL_ATTACHMENT 保持一致。
 MAX_BODY = 150 * 1024 * 1024
+
+# 附件在线预览依赖浏览器按正确的 MIME 类型加载模块化脚本与 Worker（pdf.js 用 .mjs，
+# 部分引擎用 .wasm），而系统自带的 mimetypes 表未必认识这些后缀，这里显式补齐，
+# 否则响应头会退化成 application/octet-stream，被 nosniff 拦下。
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
 
 
 # --------------------------------------------------------------------------- 上下文
@@ -220,6 +226,25 @@ def port_owner(port):
     except OSError:
         pass
     return ""
+
+
+# 静态资源统一带 X-Content-Type-Options: nosniff，类型给错浏览器会直接拒绝执行，
+# 而 mimetypes 对下面这些扩展名的支持随 Python 版本变化（.mjs 要到 3.11 才有），
+# 因此在猜测结果之上再做一层固定映射。
+MIME_OVERRIDES = {
+    ".mjs": "text/javascript",
+    ".js": "text/javascript",
+    ".wasm": "application/wasm",
+    ".map": "application/json",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+}
+
+# 内嵌的前端库（www/vendor）体积较大，允许浏览器缓存；前端加载时带 ?v=<版本号>，
+# 升级后 URL 随之改变，缓存会自然失效。
+VENDOR_MAX_AGE = 604800
 
 
 def content_disposition(filename, inline=False):
@@ -1123,7 +1148,7 @@ class Handler(BaseHTTPRequestHandler):
     def clear_cookie(self):
         self._cookie = "%s=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" % COOKIE_NAME
 
-    def send_bytes(self, data, content_type, status=200, extra_headers=None):
+    def send_bytes(self, data, content_type, status=200, extra_headers=None, cache_control="no-store"):
         if isinstance(data, str):
             data = data.encode("utf-8")
         self.send_response(status)
@@ -1131,7 +1156,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         cookie = getattr(self, "_cookie", None)
         if cookie:
             self.send_header("Set-Cookie", cookie)
@@ -1268,10 +1293,10 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send_error(u"读取资源失败", 500)
             return
-        headers = {}
-        if rel in ("index.html",) or ctype.startswith("text/html"):
-            headers["Cache-Control"] = "no-store"
-        self.send_bytes(data, ctype, extra_headers=headers)
+        # 内嵌预览库合计几 MB 且只在版本发布时变化，让浏览器缓存一周，
+        # 免得每次点开附件都重新下载一遍引擎；页面本身和其他资源仍然禁止缓存。
+        cache_control = "public, max-age=604800" if rel.startswith("vendor/") else "no-store"
+        self.send_bytes(data, ctype, cache_control=cache_control)
 
 
 class Server(ThreadingHTTPServer):
