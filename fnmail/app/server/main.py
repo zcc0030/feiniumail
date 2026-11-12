@@ -34,18 +34,23 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.28"
+APP_VERSION = "1.0.29"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
 # 调整时需与 mailsend.MAX_TOTAL_ATTACHMENT 保持一致。
 MAX_BODY = 150 * 1024 * 1024
 
-# 附件在线预览依赖浏览器按正确的 MIME 类型加载模块化脚本与 Worker（pdf.js 用 .mjs，
-# 部分引擎用 .wasm），而系统自带的 mimetypes 表未必认识这些后缀，这里显式补齐，
-# 否则响应头会退化成 application/octet-stream，被 nosniff 拦下。
+# 附件在线预览依赖浏览器按正确的 MIME 类型加载模块化脚本、Worker 与字体
+# （pdf.js 用 .mjs，部分引擎用 .wasm，PDF 的 CJK 回退字体用 .woff2），而系统自带
+# 的 mimetypes 表未必认识这些后缀，这里显式补齐，否则响应头会退化成
+# application/octet-stream，被 nosniff 拦下。
 mimetypes.add_type("text/javascript", ".mjs")
 mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
+mimetypes.add_type("font/ttf", ".ttf")
+mimetypes.add_type("font/otf", ".otf")
 
 
 # --------------------------------------------------------------------------- 上下文
@@ -1293,9 +1298,12 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send_error(u"读取资源失败", 500)
             return
-        # 内嵌预览库合计几 MB 且只在版本发布时变化，让浏览器缓存一周，
-        # 免得每次点开附件都重新下载一遍引擎；页面本身和其他资源仍然禁止缓存。
-        cache_control = "public, max-age=604800" if rel.startswith("vendor/") else "no-store"
+        # 内嵌预览引擎与它依赖的运行时资源（pdf worker / cmaps / 字体、各 Office
+        # worker 等）合计十几 MB，且只在版本发布时变化，让浏览器缓存一周，免得每次
+        # 点开附件都重新下载一遍；页面本身和其他资源仍然禁止缓存。
+        cache_control = ("public, max-age=604800"
+                         if rel.startswith("vendor/") or rel.startswith("file-viewer/")
+                         else "no-store")
         self.send_bytes(data, ctype, cache_control=cache_control)
 
 

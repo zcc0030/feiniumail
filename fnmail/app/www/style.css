@@ -825,77 +825,22 @@ table.simple .nowrap { white-space: nowrap; }
   .msg-from { max-width: 38%; }
 }
 
-/* 附件在线预览：渲染都在浏览器里完成，这里只负责弹层骨架。
-   Office / PDF 文档各自的排版由对应库注入，类名都带自己的前缀，互不干扰。 */
+/* 附件在线预览：渲染交给内嵌的 Flyfish File Viewer（/file-viewer/flyfish-viewer.iife.js），
+   这里只负责弹层骨架。viewer 在 .preview-stage 内部自建 Shadow DOM，它的样式与页面互不影响，
+   所以下面不用再管各格式的排版。 */
 .modal.preview { width: 92vw; max-width: 92vw; height: 92vh; max-height: 92vh; }
 .modal.preview .modal-head { padding: 10px 16px; }
 .modal.preview .modal-head h3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal.preview .modal-foot { padding: 8px 16px; }
-.preview-note { font-size: 12px; }
-.preview-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px 0;
-  flex: none;
-}
-.preview-toolbar:empty { display: none; }
-.preview-steps { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
-.preview-steps .btn[disabled] { opacity: .45; cursor: default; }
-.preview-tabs { display: flex; gap: 6px; overflow-x: auto; flex: none; }
-.preview-tabs:not(.is-multi) { display: none; }
-.preview-tab {
-  flex: none;
-  padding: 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-}
-.preview-tab.is-active { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-dark); }
 .preview-stage {
   flex: 1;
   min-height: 0;
   margin: 10px 16px 0;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg);
-  text-align: center;
 }
-.preview-status { padding: 40px 20px; font-size: 13px; color: var(--text-3); }
+/* 预览引擎没能加载（或挂载失败）时才会出现，正常预览由 viewer 自己渲染加载与错误提示。 */
+.preview-status { padding: 40px 20px; font-size: 13px; color: var(--text-3); text-align: center; }
 .preview-status.err { color: var(--danger); }
-.preview-status p { margin: 0 0 8px; }
-.preview-image { max-width: 100%; height: auto; }
-.preview-text {
-  margin: 0;
-  padding: 14px 16px;
-  text-align: left;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: 12.5px/1.7 ui-monospace, Menlo, Consolas, "Courier New", monospace;
-  color: var(--text);
-}
-.preview-pdf { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px; }
-.preview-pdf-holder { background: #fff; box-shadow: 0 2px 10px rgba(23, 43, 77, .16); }
-.preview-pdf-page { display: block; max-width: 100%; height: auto; }
-.preview-doc, .preview-docx { padding: 12px; text-align: left; background: #fff; }
-.preview-sheet { overflow: auto; }
-.preview-table { border-collapse: collapse; font-size: 12.5px; background: #fff; }
-.preview-table th, .preview-table td {
-  max-width: 320px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  text-align: left;
-  vertical-align: top;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.preview-table th { background: var(--brand-soft); font-weight: 600; }
-.preview-ppt { padding: 12px; }
-.preview-ppt-slide { display: flex; justify-content: center; }
-.preview-ppt-slide svg { max-width: 100%; height: auto; }
-.preview-pptx { padding-bottom: 12px; text-align: left; }

@@ -1,0 +1,49 @@
+肥牛邮箱（FeiniuMail）内嵌的第三方前端库
+==========================================
+
+预览能力来自内嵌的 Flyfish File Viewer：它在页面里直接渲染邮件附件（PDF /
+图片 / 文本 / Word / Excel / PowerPoint），全部在浏览器本地完成，不访问外网，
+也不经过 NAS 上的系统应用，附件内容不会上传到任何服务器。
+
+渲染引擎
+------------------------------------------------------------------------
+Flyfish File Viewer  3.3.3  Apache-2.0
+  https://github.com/flyfish-dev/file-viewer
+
+  以打包产物 flyfish-viewer.iife.js 形式提供，内含以下 @file-viewer 包：
+    core / web                         渲染调度、工具栏、Web Component 外壳
+    renderer-pdf                       PDF
+    renderer-word                      doc / docx
+    renderer-spreadsheet               xls / xlsx / ods / csv 等
+    renderer-pptx                      pptx
+    renderer-ppt                       老 .ppt（PowerPoint 97-2003）
+    renderer-image / text / media      图片 / 文本 / 音视频
+
+运行时资源（vendor/ 目录）
+------------------------------------------------------------------------
+pdf/      pdf.js 渲染 worker、CMaps（.bcmap）、WASM 与标准字体
+docx/     docx 渲染 worker 与 JSZip
+xlsx/     表格渲染 worker 与第三方许可证清单
+pptx/     pptx 渲染 worker
+ppt/      老 .ppt 渲染 worker（pptjs）
+
+打包中一并含入的第三方库
+------------------------------------------------------------------------
+pdfjs-dist        Apache-2.0           https://github.com/mozilla/pdf.js
+SheetJS (xlsx)    Apache-2.0           https://git.sheetjs.com/sheetjs/sheetjs
+JSZip             MIT 或 GPLv3         https://github.com/Stuk/jszip
+DOMPurify         MPL-2.0 或 Apache-2.0 https://github.com/cure53/DOMPurify
+docx-preview      Apache-2.0           https://github.com/VolodymyrBaydalka/docxjs
+Noto Sans SC      OFL-1.1              PDF 中文回退字体
+
+许可证文本
+------------------------------------------------------------------------
+- licenses/                     各 @file-viewer 包（含 doc / docx / ppt / pptx）
+                                与 DOMPurify 的许可证及第三方声明
+- vendor/pdf/cmaps/LICENSE      CMaps 数据
+- vendor/pdf/standard_fonts/    标准字体（LICENSE_FOXIT / LICENSE_LIBERATION）
+- vendor/pdf/wasm/              WASM 解码器（JBIG2 / OpenJPEG / QCMS 等）
+- vendor/pdf/fonts/OFL-1.1.txt  Noto Sans SC 字体授权
+- vendor/xlsx/licenses/         表格渲染的第三方许可证清单
+
+分发本应用时需一并保留上述声明。

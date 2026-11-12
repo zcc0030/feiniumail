@@ -71,8 +71,9 @@
 <div id="notifyRoot" class="notify-root"></div>
 <div id="toastRoot" class="toast-root"></div>
 
-<!-- 内嵌预览库（doc / pptx 引擎）是 ES 模块，靠这张表解析它们对 dompurify 的引用。 -->
-<script type="importmap">{"imports":{"dompurify":"/vendor/dompurify.es.mjs"}}</script>
+<!-- 附件在线预览引擎：Flyfish File Viewer（内含 PDF / Word / Excel / PPT / 图片 / 文本等渲染器，
+     以 IIFE 形式提供 window.FnmailFileViewer，供 preview.js 调用）。 -->
+<script src="/file-viewer/flyfish-viewer.iife.js"></script>
 <script src="/preview.js"></script>
 <script src="/app.js"></script>
 </body>

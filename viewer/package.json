@@ -1,0 +1,22 @@
+{
+  "name": "fnmail-viewer",
+  "private": true,
+  "version": "3.3.3",
+  "description": "肥牛邮箱内嵌在线预览使用的 Flyfish File Viewer 打包工程",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --format=iife --minify --target=es2020 --outfile=../fnmail/app/www/file-viewer/flyfish-viewer.iife.js"
+  },
+  "devDependencies": {
+    "@file-viewer/core": "3.3.3",
+    "@file-viewer/web": "3.3.3",
+    "@file-viewer/renderer-image": "3.3.3",
+    "@file-viewer/renderer-media": "3.3.3",
+    "@file-viewer/renderer-pdf": "3.3.3",
+    "@file-viewer/renderer-ppt": "3.3.3",
+    "@file-viewer/renderer-pptx": "3.3.3",
+    "@file-viewer/renderer-spreadsheet": "3.3.3",
+    "@file-viewer/renderer-text": "3.3.3",
+    "@file-viewer/renderer-word": "3.3.3",
+    "esbuild": "0.25.12"
+  }
+}
