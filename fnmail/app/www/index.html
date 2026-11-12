@@ -72,8 +72,10 @@
 <div id="toastRoot" class="toast-root"></div>
 
 <!-- 附件在线预览引擎：Flyfish File Viewer（内含 PDF / Word / Excel / PPT / 图片 / 文本等渲染器，
-     以 IIFE 形式提供 window.FnmailFileViewer，供 preview.js 调用）。 -->
-<script src="/file-viewer/flyfish-viewer.iife.js"></script>
+     以 IIFE 形式提供 window.FnmailFileViewer，供 preview.js 调用）。
+     地址里的版本号占位符由服务端替换为当前版本号：引擎文件体积大、要长期缓存，
+     但文件名固定不变，升级后浏览器会继续用缓存里的旧脚本，必须靠版本号换 URL 才能刷新。 -->
+<script src="/file-viewer/flyfish-viewer.iife.js?v=__FNMAIL_VERSION__"></script>
 <script src="/preview.js"></script>
 <script src="/app.js"></script>
 </body>

@@ -38,29 +38,44 @@ registerFileViewerAutoRendererPreset(
   { id: 'fnmail-preview', packageName: 'fnmail-viewer' }
 );
 
+/* 引擎本体与它依赖的运行时资源都只在版本发布时变化，文件名却固定不变，必须靠版本号
+   换 URL 才能让升级后的浏览器取到新文件（否则会一直用旧缓存）。版本号从引入本脚本的
+   <script src="…/flyfish-viewer.iife.js?v=1.0.31"> 上读，无需在打包时注入。 */
 const BASE = '/file-viewer/';
 setDefaultFileViewerAssetBaseUrl(BASE);
+const VERSION = (() => {
+  const src = document.currentScript && document.currentScript.src;
+  if (!src) return '';
+  try {
+    return new URL(src, location.href).searchParams.get('v') || '';
+  } catch (err) {
+    return '';
+  }
+})();
 const A = (p) => BASE + p;
+/* 版本号只加在「具体文件」地址上。cmaps、标准字体这类是目录地址，引擎会在其后自行拼接
+   文件名，加查询串会把拼出来的 URL 弄坏；它们本身也几乎不变，按路径缓存即可。 */
+const AF = (p) => (VERSION ? A(p) + (p.indexOf('?') >= 0 ? '&' : '?') + 'v=' + VERSION : A(p));
 /* docx 渲染器会给 worker / jszip 的 URL 打上运行时版本号，显式传入时需自己带上。 */
 const docxVer = (u) => u + (u.indexOf('?') >= 0 ? '&' : '?') + 'file-viewer-docx=0.3.39';
 const assetOptions = {
   pdf: {
-    workerUrl: A('vendor/pdf/pdf.worker.mjs'),
+    workerUrl: AF('vendor/pdf/pdf.worker.mjs'),
     cMapUrl: A('vendor/pdf/cmaps/'),
     wasmUrl: A('vendor/pdf/wasm/'),
     standardFontDataUrl: A('vendor/pdf/standard_fonts/'),
     cjkFontFallbackPath: A('vendor/pdf/fonts/')
   },
   docx: {
-    workerUrl: docxVer(A('vendor/docx/docx.worker.js')),
-    workerJsZipUrl: docxVer(A('vendor/docx/jszip.min.js'))
+    workerUrl: docxVer(AF('vendor/docx/docx.worker.js')),
+    workerJsZipUrl: docxVer(AF('vendor/docx/jszip.min.js'))
   },
-  spreadsheet: { workerUrl: A('vendor/xlsx/sheet.worker.js') },
+  spreadsheet: { workerUrl: AF('vendor/xlsx/sheet.worker.js') },
   presentation: {
-    workerUrl: A('vendor/pptx/pptx.worker.js'),
+    workerUrl: AF('vendor/pptx/pptx.worker.js'),
     /* 老 .ppt 的解析 Worker 走独立文件：IIFE 下 import.meta.url 不可用，
        必须显式给 URL，否则 PptWorkerClient 无法定位 pptjs.worker.js。 */
-    pptWorkerUrl: A('vendor/ppt/pptjs.worker.js')
+    pptWorkerUrl: AF('vendor/ppt/pptjs.worker.js')
   }
 };
 defineFileViewerElement();

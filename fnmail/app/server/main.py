@@ -34,7 +34,7 @@ import scheduler  # noqa: E402
 import security  # noqa: E402
 
 APP_NAME = u"肥牛邮箱"
-APP_VERSION = "1.0.30"
+APP_VERSION = "1.0.31"
 COOKIE_NAME = "fnmail_session"
 # HTTP 请求体上限。写信时附件以 base64 随 JSON 提交，体积约为原始大小的 4/3，
 # 因此该值必须留出余量：100 MB 附件 -> 约 133 MB，此处取 150 MB。
@@ -1298,9 +1298,14 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             self._send_error(u"读取资源失败", 500)
             return
-        # 内嵌预览引擎与它依赖的运行时资源（pdf worker / cmaps / 字体、各 Office
-        # worker 等）合计十几 MB，且只在版本发布时变化，让浏览器缓存一周，免得每次
-        # 点开附件都重新下载一遍；页面本身和其他资源仍然禁止缓存。
+        if os.path.basename(target) == "index.html":
+            # 页面里的 __FNMAIL_VERSION__ 换成当前版本号，用于给预览引擎的 URL 带上版本。
+            data = data.replace(b"__FNMAIL_VERSION__", APP_VERSION.encode("utf-8"))
+        # 内嵌预览引擎与它依赖的运行时资源（pdf worker / cmaps / 字体、各 Office worker
+        # 等）合计十几 MB，且只在版本发布时变化，让浏览器缓存一周，免得每次点开附件都重新
+        # 下载一遍。引擎本体和各类 worker 的地址上都带了版本号，升级后 URL 会变，因此不会
+        # 被旧缓存挡住；cmaps 与字体这类目录地址由引擎自行拼文件名、加不了版本号，但内容
+        # 基本不变，按路径缓存即可。页面本身和其他资源仍然禁止缓存。
         cache_control = ("public, max-age=604800"
                          if rel.startswith("vendor/") or rel.startswith("file-viewer/")
                          else "no-store")
