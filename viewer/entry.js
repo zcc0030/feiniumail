@@ -3,20 +3,40 @@
  * 把 Flyfish File Viewer（@file-viewer/* 3.3.3）的 core、web 组件与八个渲染器
  * 打成一个 IIFE，挂到 window.FnmailFileViewer 上，供 /preview.js 调用。
  *
- * 八个渲染器通过 import 自注册到全局 registry，所以只需要 import 一次即可；
- * 运行时资源（pdf worker / cmaps / 字体、xlsx、docx、pptx 的 worker）由
+ * 各 renderer 包只导出 renderer 对象、不会自注册（只有 preset-* 包才会），因此这里
+ * 取出需要的八个渲染器，用一个自建的自动预设注册进全局 registry，viewer 挂载时会
+ * 自动装配；运行时资源（pdf worker / cmaps / 字体、xlsx、docx、pptx 的 worker）由
  * www/file-viewer/vendor/** 提供，基址在下面统一指定。
  */
 import { defineFileViewerElement, mountViewer } from '@file-viewer/web';
+import { registerFileViewerAutoRendererPreset } from '@file-viewer/core';
 import { setDefaultFileViewerAssetBaseUrl } from '@file-viewer/core/assets';
-import '@file-viewer/renderer-pdf';
-import '@file-viewer/renderer-word';
-import '@file-viewer/renderer-spreadsheet';
-import '@file-viewer/renderer-pptx';
-import '@file-viewer/renderer-ppt';
-import '@file-viewer/renderer-image';
-import '@file-viewer/renderer-text';
-import '@file-viewer/renderer-media';
+import { pdfRenderer } from '@file-viewer/renderer-pdf';
+import { wordRenderer } from '@file-viewer/renderer-word';
+import { spreadsheetRenderer } from '@file-viewer/renderer-spreadsheet';
+import { pptxRenderer } from '@file-viewer/renderer-pptx';
+import { pptRenderer } from '@file-viewer/renderer-ppt';
+import { imageRenderer } from '@file-viewer/renderer-image';
+import { textRenderer } from '@file-viewer/renderer-text';
+import { mediaRenderer } from '@file-viewer/renderer-media';
+
+/* 按格式挑出的八个渲染器：PDF、Word（doc/docx/rtf/odt）、表格
+   （xls/xlsx/ods/csv）、新版 pptx、老 .ppt、图片、文本与代码、音视频。
+   注册为自动预设后，preview.js 调用 mountViewer 时无需再传 renderers。 */
+const renderers = [
+  pdfRenderer,
+  wordRenderer,
+  spreadsheetRenderer,
+  pptxRenderer,
+  pptRenderer,
+  imageRenderer,
+  textRenderer,
+  mediaRenderer
+];
+registerFileViewerAutoRendererPreset(
+  { id: 'fnmail-preview', label: '肥牛邮箱内嵌预览渲染器', renderers },
+  { id: 'fnmail-preview', packageName: 'fnmail-viewer' }
+);
 
 const BASE = '/file-viewer/';
 setDefaultFileViewerAssetBaseUrl(BASE);
