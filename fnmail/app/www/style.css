@@ -828,14 +828,24 @@ table.simple .nowrap { white-space: nowrap; }
 /* 附件在线预览：渲染交给内嵌的 Flyfish File Viewer（/file-viewer/flyfish-viewer.iife.js），
    这里只负责弹层骨架。viewer 在 .preview-stage 内部自建 Shadow DOM，它的样式与页面互不影响，
    所以下面不用再管各格式的排版。 */
-.modal.preview { width: 92vw; max-width: 92vw; height: 92vh; max-height: 92vh; }
+.modal.preview {
+  width: min(92vw, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  height: min(92vh, calc(100vh - 40px));
+  max-height: calc(100vh - 40px);
+  min-width: 0;
+  overflow: hidden;
+}
 .modal.preview .modal-head { padding: 10px 16px; }
 .modal.preview .modal-head h3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal.preview .modal-foot { padding: 8px 16px; }
 .preview-stage {
   flex: 1;
   min-height: 0;
-  margin: 10px 16px 0;
+  min-width: 0;
+  width: calc(100% - 32px);
+  max-width: calc(100% - 32px);
+  margin: 10px auto 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
