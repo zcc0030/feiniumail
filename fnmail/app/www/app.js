@@ -1135,7 +1135,9 @@ function onReaderClick(event) {
       openCompose({
         accountId: msg.account_id,
         subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject,
-        html: quoteHtml(msg, true)
+        html: quoteHtml(msg, true),
+        // 原邮件里的附件随转发一起带走，由写信窗口在后台逐个读出来。
+        forwardFrom: msg
       });
     }
     return;
@@ -1309,6 +1311,34 @@ function openAttachmentByHost(msg, index, label, downloadUrl) {
     });
 }
 
+/* 转发时把原邮件的附件一并带走。附件本来就归档在 NAS 上，这里按部件索引直接读回来
+   （同源地址带访问口令），转成 base64 交给写信接口即可；用户既不用先另存再重新选择，
+   也不会多出文件对话框。 */
+function fetchAttachmentData(messageId, attachment) {
+  var url = '/api/messages/' + messageId + '/parts/' + attachment.part_index +
+    '?_t=' + encodeURIComponent(state.token);
+  var blob = null;
+  return fetch(url).then(function (resp) {
+    if (!resp.ok) throw new Error('附件读取失败（HTTP ' + resp.status + '）');
+    return resp.blob();
+  }).then(function (result) {
+    blob = result;
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result)); };
+      reader.onerror = function () { reject(reader.error || new Error('附件读取失败')); };
+      reader.readAsDataURL(blob);
+    });
+  }).then(function (dataUrl) {
+    return {
+      filename: attachment.filename || '附件',
+      content_type: attachment.content_type || 'application/octet-stream',
+      size: attachment.size || blob.size,
+      data: dataUrl.indexOf(',') >= 0 ? dataUrl.split(',')[1] : dataUrl
+    };
+  });
+}
+
 function quoteHtml(msg, withHeader) {
   var head = '';
   if (withHeader) {
@@ -1335,7 +1365,9 @@ function openCompose(opts) {
   var compose = {
     accountId: accountId,
     draftId: opts.draftId || null,
-    attachments: [],
+    attachments: (opts.attachments || []).slice(),
+    // 转发来的附件要逐个从归档里读出来，读完之前不允许发送，否则会发出空附件。
+    pendingAttach: [],
     inReplyTo: opts.inReplyTo || '',
     references: opts.references || ''
   };
@@ -1588,16 +1620,39 @@ function openCompose(opts) {
       var addrBox = $('#cmpTo', wrapper);
       addrBox.addEventListener('input', function () { autoGrowAddrBox(addrBox); });
       autoGrowAddrBox(addrBox);
+
+      // 转发：原邮件的附件在后台逐个读出，读完自动出现在附件区，可自行删除。
+      var fwd = opts.forwardFrom;
+      if (fwd && fwd.attachments && fwd.attachments.length) {
+        fwd.attachments.forEach(function (item) {
+          var name = item.filename || '附件';
+          compose.pendingAttach.push(name);
+          renderAttachChips();
+          fetchAttachmentData(fwd.id, item).then(function (att) {
+            compose.attachments.push(att);
+          }).catch(function (err) {
+            toast('附件「' + name + '」未能一并转发：' + (err && err.message ? err.message : '读取失败'), 'err');
+          }).then(function () {
+            var at = compose.pendingAttach.indexOf(name);
+            if (at >= 0) compose.pendingAttach.splice(at, 1);
+            if (state.compose === compose) renderAttachChips();
+          });
+        });
+      }
     }
   });
 
   function renderAttachChips() {
     var chips = $('#cmpAttachChips');
     if (!chips) return;
+    // 正在读取的附件先占个位，让用户看得见「还没读完」，而不是以为附件丢了。
+    var pending = (compose.pendingAttach || []).map(function (name) {
+      return '<span class="chip pending">' + esc(name) + ' <span class="muted">准备中…</span></span>';
+    }).join('');
     chips.innerHTML = compose.attachments.map(function (item, index) {
       return '<span class="chip">' + esc(item.filename) + ' <span class="muted">' + esc(fmtSize(item.size)) + '</span>' +
         '<button data-rm-attach="' + index + '">×</button></span>';
-    }).join('');
+    }).join('') + pending;
     $$('[data-rm-attach]', chips).forEach(function (btn) {
       btn.onclick = function () {
         compose.attachments.splice(Number(btn.dataset.rmAttach), 1);
@@ -2165,6 +2220,7 @@ function sendCompose(asDraft) {
     references: compose.references
   };
   if (!asDraft && !payload.to.length) { toast('请填写收件人', 'err'); return; }
+  if (compose.pendingAttach && compose.pendingAttach.length) { toast('附件还在准备中，请稍候再发送', 'err'); return; }
   var status = $('#cmpStatus');
   if (status) status.textContent = asDraft ? '正在保存草稿…' : '正在发送…';
   $$('[data-cmp="send"],[data-cmp="save-draft"]').forEach(function (b) { b.disabled = true; });

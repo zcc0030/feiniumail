@@ -692,6 +692,8 @@ table.simple .nowrap { white-space: nowrap; }
   background: #eef2f7; font-size: 12px;
 }
 .chip button { border: none; background: transparent; color: var(--text-3); cursor: pointer; }
+/* 转发时原邮件附件正在读取，先占位显示，读完换成可删除的正常附件。 */
+.chip.pending { background: #f7f9fc; border: 1px dashed #cfd6e0; color: var(--text-3); }
 
 .toast-root { position: fixed; right: 18px; bottom: 18px; z-index: 90; display: flex; flex-direction: column; gap: 8px; }
 .toast {
